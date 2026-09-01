@@ -1,137 +1,68 @@
-# Govee LED BLE for Home Assistant
+# Govee BLE control protocol — two encryption generations
 
-[![HACS][hacs-badge]][hacs-url]
-[![GitHub Release][release-badge]][release-url]
-[![Validate][validate-badge]][validate-url]
-[![Home Assistant][ha-badge]][ha-url]
+Notes from reverse-engineering how the Govee Home app talks to Govee lights over
+Bluetooth LE, so that a local client can do the same without the cloud.
 
-Local BLE control and effect authoring for supported Govee lights from Home Assistant, with no cloud dependency.
+This started as one device and one scheme. It now covers **two encryption
+generations** across **three SKUs in three different pact families**, which is
+enough for the general shape to be visible rather than guessed at.
 
-## Device support
+| | H617A / H6199 | **H66A0** | **H1A42** | **H61F5** |
+|---|---|---|---|---|
+| Encryption | plaintext | **v2** (AES-GCM) | **v2** | **v1** (AES-ECB + RC4) |
+| pactType / pactCode | — | 2 / 1 | 1 / 2 | 3 / 1 |
+| `2b12` marker | absent | `01 02` | `01 02` | **absent** |
+| Segments / page stride | 15 / 3, 15 / 4 | 14 / 4 | 5 / 4 | — |
 
-| Model | Status | Controls and limitations | Evidence |
-| --- | --- | --- | --- |
-| **H617A** | Supported | Power, brightness, RGB, colour temperature, 15 segments, 83 scenes, 11 music modes and Effect Studio | Repository Kaitai schemas and physical qualification |
-| **H617E** | Supported | H617A-compatible controls, scenes, effects and music modes | H617A-compatible profile and physical owner feedback |
-| **H6199** | Supported | Power, brightness, RGB, colour temperature, 15 segments, 240 scenes, video and music modes, advanced controls and Effect Studio | Repository Kaitai schemas and physical qualification |
+The thing worth taking from that table: **`2b12` being absent does not mean a
+device is unencrypted.** H61F5 has no marker characteristic at all and is
+encrypted anyway. Getting that wrong produces a light that connects, acknowledges
+every command and never moves — see `PROTOCOL.md` §10.3.
 
-**Experimental** is a model-specific prerelease awaiting owner confirmation.  **Partial** has confirmed controls plus known disabled gaps.  **Compatible** has no known issue in its exposed feature set but incomplete documentation.  **Supported** is fully documented, with every known feature implemented or explicitly excluded.  See [CONTRIBUTING.md](CONTRIBUTING.md) for the request, prerelease and promotion process.
+## What is here
 
-## Effect Studio
+| File | Contents |
+|---|---|
+| `PROTOCOL.md` | Both encryption schemes: keys, handshakes, frame formats, the detection cascade |
+| `COMMANDS.md` | The command and query language — the 20-byte frames themselves |
+| `COMPATIBILITY.md` | Per-device results: encryption version, firmware, hardware, pact values |
+| `tools/find_app_keys.py` | Recovers the three app-global keys from an APK's `resources.arsc` |
 
-Govee Effect Studio is added to the Home Assistant sidebar when the integration loads.  It provides local, model-aware effect editing without a Govee cloud account.
+## The three app-global keys
 
-| Model | Studio surfaces |
-| --- | --- |
-| H617A | Scenes, painted segments, single-layer effects, multi-layered effects, reactive music effects and advanced layered effects |
-| H617E | H617A-compatible scenes, effects and reactive music effects |
-| H6199 | Scenes, palette effects, reactive music effects, Movie and Game video profiles, and advanced layered effects |
+Both schemes are protected by constants compiled into the public APK. They are
+identical for every installation, are not per-device, and no `secretCode` or cloud
+call is involved. `PROTOCOL.md` §3 has the values and how they are recovered.
 
-H6199 video profiles keep saturation, capture area, sound effects, softness, white balance, relative brightness and blank-screen behaviour together as one reusable effect.
+**Version stability: the three keys and the three string resources they come from
+are byte-identical in Govee Home 7.5.30 (16 July 2026) and 7.6.10 (21 August
+2026).** That is a statement about those two builds on that date and nothing more.
+Re-check it on any later version with `tools/find_app_keys.py`, which finds the
+material by content rather than by resource id — the ids moved between exactly
+those two builds, and a lookup by id returned plausible-looking nonsense rather
+than failing.
 
-Administrators can edit effects and manage the shared saved-effect library.  Other authenticated users can browse scenes and compatible saved effects in read-only mode.
+## Reproducing
 
-### Using the editor
-
-1. Open **Govee Effect Studio** from the Home Assistant sidebar and choose a light.
-2. Select a category, then choose a built-in template or saved effect.
-3. Leave **Live** enabled to preview changes on the light, or disable it and use **Apply** when the draft is ready.
-4. Use **Save** for a built-in default, **Save As** for a named library effect, and **Reset** to restore the catalogue version.
-
-**Auto Save** persists committed changes to the selected built-in default or saved effect.  Editable built-ins can retain a per-light default, including native scenes, music profiles and H6199 video profiles.  The current unsaved draft is retained per device.
-
-Saved effect names appear in the standard Home Assistant light effect selector, so dashboards, scenes, scripts and automations use the same control path as Effect Studio.  The `ha_govee_led_ble.apply_custom_effect` entity action accepts either the current saved name or its stable effect ID and supports entity, device, area and label targets.
-
-Home Assistant light commands, scenes and automations take priority over Live previews.  Effect uploads and activation use one serialised operation, with verification and recovery on state-readable devices.
-
-Effect definitions are model-specific.  A strip cannot return the body uploaded by the Govee app, and the app provides no supported export format, so Effect Studio cannot import an arbitrary app-authored DIY effect directly.  The protocol boundary is documented in [#89](https://github.com/teh-hippo/ha-govee-led-ble/issues/89).
-
-## Upgrade notes
-
-- Version 7 adds Effect Studio while retaining the standard Home Assistant light effect selector introduced in version 6.
-- The standalone H617A scene-speed entity remains removed.  Edit scene speed in Effect Studio or select the native scene through the light effect selector.
-- Renaming a saved effect immediately changes its selector name.  Name-based automations must use the new name; the stable effect ID does not change.
-- Effect Studio stores the current saved definition rather than revision history.  Deleting a saved effect is permanent.
-- Timers, the active-mode sensor and the old mode services remain removed.  Segment painting remains available through the `paint_segments`, `set_segment_color` and `set_segment_brightness` entity actions.
-
-## Installation
-
-### HACS (recommended)
-
-1. Open **HACS** → three-dot menu → **Custom repositories**
-2. Add `https://github.com/teh-hippo/ha-govee-led-ble` as **Integration**
-3. Enable **Show beta versions** for the repository when installing a prerelease.
-4. Install **Govee LED BLE** and restart Home Assistant.
-
-### Manual
-
-Download `ha_govee_led_ble.zip` from the GitHub release, extract it into `config/custom_components/ha_govee_led_ble/`, and restart Home Assistant.  A source checkout does not contain generated runtime modules; developers building from source must run `make package` and install the resulting ZIP.
-
-### Updating
-
-Restart Home Assistant after updating this integration through HACS or replacing the manual installation.  Home Assistant can reload a config entry's runtime state, but integration updates contain Python modules that are loaded when Home Assistant starts.
-
-## Configuration
-
-The integration auto-discovers exact listed models.  Experimental models are available only in their model-specific prerelease.
-
-To add manually in Home Assistant:
-
-**Settings → Devices & Services → Add Integration → Govee LED BLE**
-
-Use the integration's **Configure** action to choose which Effect Studio categories and light effect names are exposed for each device.
-
-Use **Reconfigure** to correct the selected model while preserving the existing config entry and entity identity.
-
-## Scope, non-goals, and expert tools
-
-The maintained product scope and per-model limitations are defined by the [device support table](#device-support).  The persistent H617A [`0xa3` register](https://github.com/teh-hippo/ha-govee-led-ble/issues/131) stores the app's gradual-colour-change switch, but the app explicitly classifies H617A as unsupported.  Paired physical comparisons found no visible effect, so the integration preserves the raw boolean and exposes no user-facing behaviour for it.
-
-Wi-Fi provisioning is not a maintained integration or contributor workflow.  The decoded H6199 [`a1 11` frame](tools/ble/kaitai/h6199_wifi_provision.ksy), [reassembled body](tools/ble/kaitai/h6199_wifi_body.ksy) and [`ee 11` result](tools/ble/kaitai/h6199_wifi_result.ksy) remain as tested protocol findings.
-
-The following are intentional non-goals for this integration:
-
-- on-device timers;
-- manufacturer-style animated scene previews;
-- phone-microphone music-stream injection;
-- firmware or OTA updates.
-
-The retained music-stream schema is decode-only evidence support.  It does not provide injection or playback control.
-
-Native H6199 camera calibration is unavailable from the current local interfaces.  The completed [camera-calibration investigation](https://github.com/teh-hippo/ha-govee-led-ble/issues/136) found that the required geometry exchange remains behind the manufacturer's trusted network service.
-
-Additional models follow the request and qualification process in [CONTRIBUTING.md](CONTRIBUTING.md).  Cross-SKU evidence, Home Assistant quality-scale work, and restart-free integration updates remain separate programmes.
-
-The historical [7.0 UX completion evidence matrix](docs/completion-evidence.md) records that programme's issue dispositions, cleanup metrics, retained tests and release qualification.
-
-## Development
-
-```bash
-make build
-npm --prefix frontend exec -- playwright install webkit
-make check
-make package
+```
+python3 tools/find_app_keys.py path/to/resources.arsc
 ```
 
-`make check` is the canonical local gate.  The build requires the Node.js version in `.node-version`, locked Python dependencies through [uv](https://docs.astral.sh/uv/), and Kaitai Struct Compiler 0.11.  [mise](https://mise.jdx.dev/) can install the pinned tools, but Make calls the standard tools directly.  `make package` writes the deterministic HACS archive and SHA-256 to `dist/`; byte identity is guaranteed for the pinned CI toolchain.
+Everything else in `PROTOCOL.md` and `COMMANDS.md` is marked with how it is known:
+**verified** on hardware or in a decrypted capture, **device_accepted_write**,
+**from APK**, or **inferred**. Claims at different confidence levels are not mixed,
+and a single-device reading is labelled as one.
 
-Physical and isolated Home Assistant qualification belongs to the published [`ha-test-harness`](https://github.com/teh-hippo/ha-test-harness).  This repository does not contain privileged lab, household identity or provisioning implementations.
+## Privacy
 
-The public [`ios-ble-capture` methodology](https://github.com/teh-hippo/ios-ble-capture/blob/main/docs/methodology.md) documents the iPhone capture, peer attribution and target-owned Kaitai workflow used when adding or revisiting a model.  This repository owns its schemas and protocol findings and has no build or runtime dependency on that tooling.
+No BLE address, WiFi MAC, device UDID or derived session key appears in this
+repository, and the packet captures behind these findings are not published. A
+hardware address identifies one physical unit belonging to one person; the fact
+that a value is easy to obtain is not a reason to publish it. Examples use
+invented values that are structurally valid and unreachable.
 
-The production frontend has two generated outputs: `effect-studio-bootstrap.js` and `manifest.json`.  Home Assistant serves them without cache headers, while `editor-loader.js` validates the manifest and retains the stable fallback module.
+## Scope
 
-The project uses [Conventional Commits](https://www.conventionalcommits.org/).
-
-## License
-
-MIT
-
-[hacs-badge]: https://img.shields.io/badge/HACS-Custom-41BDF5.svg
-[hacs-url]: https://github.com/hacs/integration
-[release-badge]: https://img.shields.io/github/v/release/teh-hippo/ha-govee-led-ble
-[release-url]: https://github.com/teh-hippo/ha-govee-led-ble/releases
-[validate-badge]: https://img.shields.io/github/actions/workflow/status/teh-hippo/ha-govee-led-ble/validate.yml?branch=master&label=validate
-[validate-url]: https://github.com/teh-hippo/ha-govee-led-ble/actions/workflows/validate.yml
-[ha-badge]: https://img.shields.io/badge/HA-2026.3%2B-blue.svg
-[ha-url]: https://www.home-assistant.io
+Independent interoperability research on devices we own. Not affiliated with
+Govee. Encryption v1 in particular should not be mistaken for a security boundary
+— `PROTOCOL.md` §10.4 says why.
