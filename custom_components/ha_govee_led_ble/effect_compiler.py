@@ -9,7 +9,7 @@ from enum import StrEnum
 from hashlib import sha256
 from typing import Any, assert_never
 
-from .const import MODEL_PROFILES, MUSIC_MODE_SLUGS, get_profile, protocol_model
+from .const import MODEL_PROFILES, MUSIC_MODE_SLUGS, get_profile
 from .coordinator_modes import (
     MUSIC_STYLE_SLUGS,
     music_mode_has_parameter_write,
@@ -246,7 +246,15 @@ def compatibility(item: LibraryItem, model: str) -> CompatibilityResult:
             )
         return CompatibilityResult(CompatibilityState.COMPATIBLE)
     if isinstance(content, PaintedEffect | SingleEffect | MultiEffect):
-        if protocol_model(model) == "H617A":
+        # Two separate questions: whether the model speaks this wire grammar, and whether its
+        # profile declares the capability. A SKU comparison answers neither.
+        profile = get_profile(model)
+        declared = (
+            profile.supports_multi_layered_effects
+            if isinstance(content, MultiEffect)
+            else profile.supports_custom_effects
+        )
+        if profile.effect_grammar == "H617A" and declared:
             return CompatibilityResult(CompatibilityState.COMPATIBLE)
         return CompatibilityResult(
             CompatibilityState.INCOMPATIBLE,
@@ -595,7 +603,8 @@ def compile_application(item: LibraryItem, model: str, *, diy_code: int | None =
     if isinstance(item.content, VideoProfile):
         return compile_video_profile(item, model)
     if isinstance(item.content, PaintedEffect | SingleEffect | MultiEffect):
-        if protocol_model(model) != "H617A":
+        profile = get_profile(model)
+        if profile.effect_grammar != "H617A" or not profile.supports_custom_effects:
             raise ValueError(f"{model} custom-effect upload is not supported")
         if diy_code is None:
             raise ValueError("custom-effect application requires a DIY code")

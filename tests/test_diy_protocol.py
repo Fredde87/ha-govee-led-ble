@@ -475,3 +475,30 @@ def test_multi_encoder_rejects_invalid_effects() -> None:
         proto.build_h617a_diy_multi([(0xFF, 0)], 50, [(255, 0, 0)])
     with pytest.raises(ValueError, match="effect variant"):
         proto.build_h617a_diy_multi([(0, 0x100)], 50, [(255, 0, 0)])
+
+
+@pytest.mark.parametrize(
+    "model",
+    [model for model, profile in MODEL_PROFILES.items() if profile.effect_grammar == "H617A"],
+)
+def test_a3_grammar_follows_the_declared_effect_grammar(model: str) -> None:
+    """Every model whose profile declares the H617A wire format must parse H617A A3 frames.
+
+    The grammar question is "which generated structure describes these bytes", which
+    ``effect_grammar`` answers exactly.  Asking a SKU instead silently refused any model outside a
+    hardcoded pair even when its own profile declared the format -- H6076 declares
+    ``effect_grammar="H617A"`` and was rejected with "has no generated A3 effect grammar".
+    """
+    item = LibraryItem.new("Wire model", PaintedEffect("clockwise", 50, 100, (None,) * 15))
+    envelope = reassemble_a3(compile_h617a(item, H617A_TYPE04_APPLY_CODE).upload_packets)
+
+    assert decode_a3_effect(parse_a3_effect_envelope(envelope, model), model) is not None
+
+
+def test_a3_grammar_still_refuses_a_different_effect_grammar() -> None:
+    """The widening must not become "accept anything": H6199 has its own grammar."""
+    item = LibraryItem.new("Wire model", PaintedEffect("clockwise", 50, 100, (None,) * 15))
+    envelope = reassemble_a3(compile_h617a(item, H617A_TYPE04_APPLY_CODE).upload_packets)
+
+    with pytest.raises(ValueError):
+        decode_a3_effect(parse_a3_effect_envelope(envelope, "H6199"), "H6199")
