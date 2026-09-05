@@ -6,6 +6,8 @@ from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import Any
 
+from .pacts import VIDEO_BODY_H6199, get_pact
+
 DOMAIN = "ha_govee_led_ble"
 CONF_MODEL = "model"
 CONF_EFFECT_CATEGORIES = "effect_categories"
@@ -111,6 +113,11 @@ class ModelProfile:
     segment_count: int = 0
     segment_group_size: int = 0
     supports_segment_writes: bool = False
+    # Which wire dialect this model speaks.  The vendor app routes every device to a pact
+    # package and lets the pact own the byte layout, because families that share an opcode
+    # do not share a payload.  `supports_*` answers what a model can do; `pact` answers how
+    # its bytes are shaped.  See pacts.py.
+    pact: str = "generic"
     connection_idle_timeout: float | None = None
     scene_catalogue_sku: str | None = None
     legacy_scene_catalogue_sku: str | None = None
@@ -165,6 +172,15 @@ class ModelProfile:
     @property
     def supports_color_mode_readback(self) -> bool:
         return self.can_read(ReadDomain.COLOUR_MODE) or self.can_read(ReadDomain.MODE)
+
+    @property
+    def uses_h6199_video_body(self) -> bool:
+        """Whether this model takes the H6199 video body rather than the six-byte one.
+
+        Derived from `pact` rather than stored, so a profile cannot claim a pact and then
+        contradict it.
+        """
+        return get_pact(self.pact).video_body == VIDEO_BODY_H6199
 
     @property
     def supports_segments(self) -> bool:
@@ -337,6 +353,7 @@ MODEL_PROFILES: dict[str, ModelProfile] = {
         supports_color_temperature=True,
         supports_custom_effects=True,
         supports_scenes=True,
+        pact="h6199",
         supports_video_mode=True,
         video_modes=("movie", "game"),
         supports_video_capture_region=True,
