@@ -70,6 +70,7 @@ from .light_commands import build_color_rgb, build_color_temp, kelvin_to_rgb
 from .light_services import (
     _GoveeLightServicesMixin,
 )
+from .light_services_extra import _GoveeExtraServicesMixin
 from .native_profile_controls import apply_active_video_mode as apply_active_video_mode
 from .scenes import MODEL_SCENES
 
@@ -192,7 +193,16 @@ async def async_setup_entry(
     )
 
 
-class GoveeBLELight(_GoveeLightServicesMixin, GoveeBLEEntity, RestoreEntity, LightEntity):
+class GoveeBLELight(
+    _GoveeLightServicesMixin,
+    # The video and DreamView services are registered against this entity, so the mixin
+    # defining them has to be in the MRO -- otherwise registration succeeds and every
+    # one of those calls is an AttributeError at call time.
+    _GoveeExtraServicesMixin,
+    GoveeBLEEntity,
+    RestoreEntity,
+    LightEntity,
+):
     _attr_name = None
 
     def __init__(
