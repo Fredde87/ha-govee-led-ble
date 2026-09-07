@@ -12,6 +12,8 @@ from custom_components.ha_govee_led_ble.const import (
     CONF_EFFECT_FAMILIES,
     CONF_PREFIX_EFFECT_NAMES,
     MODEL_PROFILES,
+    MUSIC_MODE_IDS_REFUSED_BY_H61F5,
+    MUSIC_MODE_SLUGS,
     UNSUPPORTED_PROFILE,
     ModelProfile,
     ReadDomain,
@@ -215,8 +217,8 @@ async def test_new_encoding_metadata_does_not_enable_music_before_profile_constr
     )
     tree.body.insert(tree.body.index(assignment) + 1, ast.parse('MUSIC_MODE_SLUGS["future_mode"] = 5').body[0])
     namespace = ModuleType("_music_profile_regression")
-    # `const` now imports a sibling relatively, so the synthetic module needs a package to
-    # resolve against; without it the exec below fails before any assertion runs.
+    # `const` imports siblings relatively, so the synthetic module needs a package to resolve
+    # them against; without it the exec below fails before any assertion runs.
     namespace.__package__ = const.__package__
     monkeypatch.setitem(sys.modules, namespace.__name__, namespace)
     exec(compile(ast.fix_missing_locations(tree), const.__file__, "exec"), namespace.__dict__)  # noqa: S102
@@ -244,3 +246,24 @@ async def test_new_encoding_metadata_does_not_enable_music_before_profile_constr
         with pytest.raises(ValueError, match="music mode"):
             await coordinator.async_select_music_slug("future_mode")
         coordinator.send_command.assert_not_awaited()
+
+
+def test_no_profile_claims_a_mode_the_registry_cannot_resolve():
+    """Every mode a profile lists must resolve to an id.
+
+    A slug that is not in the registry cannot be sent to a device, so it would be offered and
+    then fail.  Nothing else checks this, and a profile can name a mode freely.
+    """
+    for model, profile in MODEL_PROFILES.items():
+        unknown = [slug for slug in profile.music_modes if slug not in MUSIC_MODE_SLUGS]
+        assert not unknown, f"{model} lists modes with no id: {unknown}"
+
+
+def test_modes_the_swept_device_refused_are_not_claimed_by_it():
+    """A refusal is evidence too, and the profile must respect it."""
+    refused = {slug for slug, code in MUSIC_MODE_SLUGS.items() if code in MUSIC_MODE_IDS_REFUSED_BY_H61F5}
+    assert refused, "the refused ids should be nameable"
+    # Holds for whatever profiles exist, so it starts guarding the moment one is added.
+    for model, profile in MODEL_PROFILES.items():
+        if model == "H61F5":
+            assert not set(profile.music_modes) & refused, f"{model} claims a refused mode"
