@@ -61,6 +61,7 @@ class ReadDomain(StrEnum):
     DISPLAY_SETTING = "display_setting"
     RELATIVE_BRIGHTNESS = "relative_brightness"
     SEGMENTS = "segments"
+    CAMERA_INSTALL = "camera_install"
     IC_SEGMENT_COUNT = "ic_segment_count"
     OTHER = "other"
 
