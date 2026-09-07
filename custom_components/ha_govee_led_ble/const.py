@@ -13,6 +13,7 @@ CONF_MODEL = "model"
 CONF_EFFECT_CATEGORIES = "effect_categories"
 CONF_EFFECT_FAMILIES = "effect_families"
 CONF_PREFIX_EFFECT_NAMES = "prefix_effect_names"
+CONF_DREAMVIEW_MEMBERS = "dreamview_members"
 CONF_ALWAYS_INCLUDE_CUSTOM_EFFECTS = "always_include_custom_effects"
 EFFECT_FAMILY_SCENES = "scenes"
 EFFECT_FAMILY_MUSIC = "music"
@@ -124,6 +125,16 @@ class ModelProfile:
     # do not share a payload.  `supports_*` answers what a model can do; `pact` answers how
     # its bytes are shaped.  See pacts.py.
     pact: str = "generic"
+    # Whether this model can act as a DreamView sync centre -- the device that HOLDS the group
+    # and drives its sub-devices.  Sub-devices need no flag: they are named by address, and the
+    # sync centre never asks them anything.
+    supports_dreamview: bool = False
+    # How many sub-devices this sync centre accepts.  The app resolves this per model through a
+    # CLOUD lookup (`Constant.maxSubDeviceNumMovie` returns 5, 7 or 10 by goodsType), which is
+    # not reachable here.  10 is the largest the app ever permits, so it is the only bound that
+    # cannot reject a group the vendor app would have allowed; lower it for a model once its
+    # real cap is known.  The firmware is the real authority either way.
+    dreamview_max_sub_devices: int = 10
     connection_idle_timeout: float | None = None
     scene_catalogue_sku: str | None = None
     legacy_scene_catalogue_sku: str | None = None
@@ -561,6 +572,7 @@ MODEL_PROFILES: dict[str, ModelProfile] = {
         video_modes=("movie", "game"),
         supports_video_saturation=True,
         supports_video_sound_effects=True,
+        supports_dreamview=True,
         supports_relative_brightness=True,
         music_modes=_H66A0_MUSIC_MODES,
         supports_music_color=True,

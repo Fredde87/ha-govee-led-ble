@@ -28,15 +28,19 @@ from .const import (
     protocol_model,
 )
 from .control_arbiter import BLEControlArbiter, ControlIntent, PreviewAdmission, async_control_intent
+from .coordinator_display import _DisplaySettingsMixin
+from .coordinator_dreamview import _DreamviewMixin
 from .coordinator_expectations import expectations_from_packet
 from .coordinator_modes import PreModeSnapshot, _ActiveModeMixin, music_params_for_mode
 from .coordinator_status import ParsedMode, StatusDomain, decode_status_frame_result, parse_color_mode
+from .dreamview import DREAMVIEW_PACKET_TYPE, STATUS_HEADER
 from .effect_commands import build_h617a_diy_activation
 from .effect_deployments import PriorControlState
 from .generated_protocol_adapter import (
     build_blank_screen_query,
     build_brightness,
     build_brightness_query,
+    build_camera_install_query,
     build_colour_mode_query,
     build_firmware_query,
     build_h6199_subordinate_query,
@@ -45,6 +49,7 @@ from .generated_protocol_adapter import (
     build_power_query,
     build_relative_brightness_query,
     build_segment_query,
+    build_video_setting_query,
     build_white_balance_query,
     parse_command_ack_result,
     parse_command_result,
@@ -69,6 +74,7 @@ from .native_profile_controls import (
 from .native_scenes import build_native_scene_packets
 from .scenes import MODEL_SCENES, canonical_scene_key, resolve_scene_code
 from .transport import READ_UUID, WRITE_UUID
+from .video_settings import VIDEO_SETTING_READS
 
 EFFECT_SEQUENCE_ATTEMPTS = 3
 EFFECT_SEQUENCE_CONNECT_TIMEOUT = 8.0
@@ -77,6 +83,9 @@ _LOGGER = logging.getLogger(__name__)
 
 DISCONNECT_DELAY = 15
 KEEP_ALIVE_INTERVAL = 5
+# How many consecutive silent probes before the camera module is called ABSENT.  Two, so a
+# single probe that raced a busy connection does not blank the entities.
+CAMERA_ABSENT_STRIKES = 2
 STATE_QUERY_EVERY_N_KEEP_ALIVES = 3
 RX_STALE_TIMEOUT = KEEP_ALIVE_INTERVAL * 4
 IDENTITY_RETRY_TICKS = 6
@@ -118,7 +127,7 @@ _COLOR_EXPECTATION_FIELDS = frozenset(
 )
 
 
-class GoveeBLECoordinator(_ActiveModeMixin):
+class GoveeBLECoordinator(_ActiveModeMixin, _DisplaySettingsMixin, _DreamviewMixin):
     """Manages BLE connection lifecycle for a Govee device."""
 
     def __init__(
@@ -185,14 +194,29 @@ class GoveeBLECoordinator(_ActiveModeMixin):
         self.segment_brightness: list[int] = [100] * profile.segment_count
         self.segment_state_source = "initial"
         self.segment_state_observed_at: str | None = None
-        # aa 40.  ic_count is [0:2] big-endian; reported_segment_count is [2], trusted as
-        # a segment count only where the profile says so (segment_count_from_ic_probe).
+        # aa 40.  ic_count is [0:2] big-endian; reported_segment_count is [2], trusted as a
+        # segment count only where the profile says so (segment_count_from_ic_probe).
         self.ic_count: int | None = None
         self.reported_segment_count: int | None = None
+        self.video_picture_preset: str | None = None
+        self.video_reserved = 0x02
+        self.video_settings: dict[int, list[int]] = {}
+        self.camera_installed: bool | None = None
+        self._dreamview_frames: dict[int, bytes] = {}
+        self._probe_camera_replies = 0
+        self._probe_other_replies = 0
+        self._camera_silent_strikes = 0
+        self._camera_probe_pending = False
+        self._camera_needs_full_read = False
+        self._camera_before_probe: bool | None = None
+        # Set by async_release_ble so a DreamView sync centre can claim a sub-device.
+        self._ble_hold_until: float | None = None
         self._segment_groups_observed: set[int] = set()
         self._segment_query_colors: list[tuple[int, int, int]] | None = None
         self._segment_query_brightness: list[int] | None = None
         self.video_saturation = self.white_brightness = 100
+        self.video_full_screen, self.video_sound_effects = True, False
+        self.video_sound_effects_softness = 100
         self.music_sensitivity = 99
         self.music_calm = False
         self.video_full_screen, self.video_sound_effects = True, False
@@ -520,6 +544,12 @@ class GoveeBLECoordinator(_ActiveModeMixin):
         self._first_refresh_done = True
         if self.hass.is_stopping:
             return self._state_snapshot()
+        if self._ble_hold_until is not None:
+            if time.monotonic() < self._ble_hold_until:
+                # Deliberately holding off the radio.  Report the last known state rather than
+                # reconnecting, which would take the link straight back off whoever wanted it.
+                return self._state_snapshot()
+            self._ble_hold_until = None
         if self.profile.state_readable:
             try:
                 async with async_control_intent(self, ControlIntent.BACKGROUND, wait=False) as acquired:
@@ -674,6 +704,77 @@ class GoveeBLECoordinator(_ActiveModeMixin):
         if self.profile.segment_count_from_ic_probe and self.reported_segment_count:
             return min(self.reported_segment_count, SEGMENT_COUNT)
         return self.profile.segment_count
+
+    def _is_camera_domain(self, domain: StatusDomain) -> bool:
+        """Whether a reply in this domain could only have come from the camera module.
+
+        0xa9 is only camera-gated where the module owns it.  On an H6199 the same opcode is the
+        video sheet's own register and answers with no camera anywhere.
+        """
+        if domain is StatusDomain.CAMERA_INSTALL:
+            return True
+        return domain is StatusDomain.DISPLAY_SETTING and self.profile.can_read(ReadDomain.CAMERA_INSTALL)
+
+    async def _probe_camera(self, *, full: bool) -> None:
+        """Ask whether the camera module is there, and schedule the verdict.
+
+        `full` sends the whole register block; otherwise only `aa 32`, which is one frame and is
+        all that is needed to notice a module being plugged back in.  That is the back-off: a
+        device with no camera pays one unanswered frame per probe instead of ten on every
+        connection, and still notices a hot-plug within one probe interval.
+        """
+        if not (self._client and self._client.is_connected):
+            return
+        self._probe_camera_replies = 0
+        self._probe_other_replies = 0
+        # Snapshotted here because the notify handler sets camera_installed as soon as a reply
+        # lands, so by verdict time the transition would already be invisible.
+        self._camera_before_probe = self.camera_installed
+        try:
+            queries = [build_camera_install_query()]
+            if full:
+                queries.extend(build_video_setting_query(setting) for setting in VIDEO_SETTING_READS)
+            for query in queries:
+                await self._async_write_packet(self._client, query)
+        except BleakError:
+            _LOGGER.debug("Camera probe write failed for %s", self.address)
+            return
+        self._camera_probe_pending = True
+
+    def _settle_camera_probe(self) -> None:
+        """Turn the probe's silence into a determination -- or decline to.
+
+        Three outcomes, and the third is the one that makes this honest:
+
+        * a camera register answered -> present;
+        * none did, but something else did -> the link was alive and the module was not, so
+          **absent**, positively determined;
+        * nothing answered at all -> the device is unreachable, which is a different state, and
+          nothing is concluded about the camera.
+        """
+        if self._probe_camera_replies:
+            was = self._camera_before_probe
+            self.camera_installed = True
+            self._camera_silent_strikes = 0
+            if was is not True:
+                # Just plugged in: the cheap probe only asked `aa 32`, so fetch the registers
+                # that were waiting rather than making the user wait an interval.
+                _LOGGER.info("%s camera module attached", self.address)
+                self._camera_needs_full_read = True
+            self.async_set_updated_data(self.data or {})
+            return
+        if not self._probe_other_replies:
+            return  # unreachable, not absent
+        self._camera_silent_strikes += 1
+        if self._camera_silent_strikes < CAMERA_ABSENT_STRIKES:
+            return
+        if self.camera_installed is not False:
+            _LOGGER.info("%s camera module not attached", self.address)
+            self.camera_installed = False
+            # The registers came from a module that is no longer there, so keeping them would
+            # report a removed camera's last settings as current.
+            self.video_settings.clear()
+            self.async_set_updated_data(self.data or {})
 
     def _note_ic_segment_count(self, ic_count: int, reported: int) -> None:
         """Record BOTH `aa 40` fields, and say so when the second contradicts the profile.
@@ -917,6 +1018,13 @@ class GoveeBLECoordinator(_ActiveModeMixin):
         if (frame := self._encryption.decode(bytes(data))) is None:
             return
         self._last_rx_monotonic = time.monotonic()
+        if len(frame) == 20 and frame[0] == STATUS_HEADER and frame[1] == DREAMVIEW_PACKET_TYPE:
+            # Kept whole and keyed by sub-command.  Two of the 0x60 replies are digests rather
+            # than modelled bodies -- the group state and the member list -- and the readers for
+            # them live in dreamview.py, so the frame is stored rather than decoded here.
+            self._dreamview_frames[frame[2]] = frame
+            self._record_packet("rx", frame, outcome="parsed", reason="dreamview_reply")
+            return
         if frame[:1] == b"\x33":
             command = parse_command_ack_result(frame, self.model)
             reason = "command_ack_parsed"
@@ -992,6 +1100,15 @@ class GoveeBLECoordinator(_ActiveModeMixin):
                 if not self.profile.supports_color_mode_readback:
                     return
                 observed = self._apply_color_mode_payload(generated)
+            elif domain is StatusDomain.DISPLAY_SETTING and self.profile.can_read(ReadDomain.CAMERA_INSTALL):
+                # Sliced from the envelope with the parsed length rather than read off
+                # generated.body.payload, which is a typed object for the sub-commands whose
+                # meaning is established and raw bytes for the rest.  Storing both shapes the
+                # same way keeps every unidentified register honestly opaque.
+                length = int(generated.body.len)
+                self.video_settings[int(generated.body.setting)] = list(payload[2 : 2 + length])
+                self._probe_camera_replies += 1
+                self.camera_installed = True
             elif domain is StatusDomain.DISPLAY_SETTING:
                 current_white_balance: tuple[int, int] | None
                 if generated.body.setting == 0:
@@ -1044,6 +1161,9 @@ class GoveeBLECoordinator(_ActiveModeMixin):
                 if not self.profile.supports_segments:
                     return
                 observed = self._apply_segment_group(generated)
+            elif domain is StatusDomain.CAMERA_INSTALL:
+                self._probe_camera_replies += 1
+                self.camera_installed = True
             elif domain is StatusDomain.IC_SEGMENT_COUNT and self.profile.segment_count_from_ic_probe:
                 self._note_ic_segment_count(int(generated.body.ic_count), int(generated.body.segment_count))
             elif domain is StatusDomain.FIRMWARE:
@@ -1054,6 +1174,8 @@ class GoveeBLECoordinator(_ActiveModeMixin):
                 self.subordinate_20_version = generated.body.text or None
             elif domain is StatusDomain.SUBORDINATE_21:
                 self.subordinate_21_version = generated.body.text or None
+            if not self._is_camera_domain(domain):
+                self._probe_other_replies += 1
             self._mark_received(domain, *observed)
             self.async_set_updated_data(self.data or {})
         except IndexError, ValueError:
@@ -1116,14 +1238,20 @@ class GoveeBLECoordinator(_ActiveModeMixin):
             if query_color_mode and self.profile.supports_color_mode_readback:
                 queries.append(build_colour_mode_query(self.model))
             full_query = query_power and query_brightness and query_color_mode
+            # Where 0xa9 belongs to a removable camera module its registers are read by the
+            # camera probe, never here: an unplugged accessory must not be able to make the
+            # light look unresponsive.
+            reads_0xa9_here = self.profile.can_read(ReadDomain.DISPLAY_SETTING) and not self.profile.can_read(
+                ReadDomain.CAMERA_INSTALL
+            )
             if (
-                self.profile.can_read(ReadDomain.DISPLAY_SETTING)
+                reads_0xa9_here
                 and self.profile.supports_white_balance
                 and (query_white_balance if query_white_balance is not None else full_query)
             ):
                 queries.append(build_white_balance_query(self.model))
             if (
-                self.profile.can_read(ReadDomain.DISPLAY_SETTING)
+                reads_0xa9_here
                 and self.profile.supports_blank_screen
                 and (query_blank_screen if query_blank_screen is not None else full_query)
             ):
@@ -1311,8 +1439,13 @@ class GoveeBLECoordinator(_ActiveModeMixin):
         if refresh_all:
             query_power = query_brightness = True
             query_color = self.profile.supports_color_mode_readback
-            query_white_balance = self.profile.supports_white_balance
-            query_blank_screen = self.profile.supports_blank_screen
+            # Where 0xa9 belongs to a removable camera module, its registers are read by the
+            # camera probe instead.  Putting them on the state path would let an unplugged
+            # accessory look like an unresponsive light, which is the one thing the probe
+            # exists to avoid.
+            camera_owns_0xa9 = self.profile.can_read(ReadDomain.CAMERA_INSTALL)
+            query_white_balance = self.profile.supports_white_balance and not camera_owns_0xa9
+            query_blank_screen = self.profile.supports_blank_screen and not camera_owns_0xa9
             query_relative_brightness = self.profile.supports_relative_brightness
         if not any(
             (
@@ -1607,6 +1740,18 @@ class GoveeBLECoordinator(_ActiveModeMixin):
                         self._identity_retries += 1
                         async with self._lock:
                             await self._send_identity_queries()
+                    if self._camera_probe_pending:
+                        # One tick is comfortably longer than the probe's replies take, and it
+                        # avoids a timer that could outlive the connection it was measuring.
+                        self._camera_probe_pending = False
+                        self._settle_camera_probe()
+                    elif self._camera_needs_full_read:
+                        self._camera_needs_full_read = False
+                        async with self._lock:
+                            await self._probe_camera(full=True)
+                    elif self.profile.can_read(ReadDomain.CAMERA_INSTALL) and self.camera_installed is False:
+                        async with self._lock:
+                            await self._probe_camera(full=False)
                     full = self._keep_alive_ticks % STATE_QUERY_EVERY_N_KEEP_ALIVES == 0
                     async with self._lock:
                         client = self._client
@@ -1736,6 +1881,26 @@ class GoveeBLECoordinator(_ActiveModeMixin):
         if len(self.packet_log) > PACKET_LOG_LIMIT:
             del self.packet_log[:-PACKET_LOG_LIMIT]
         return entry
+
+    async def async_release_ble(self, seconds: float) -> None:
+        """Drop this device's BLE link and stay off it for `seconds`.
+
+        For handing a device to a DreamView sync centre.  A sync centre drives its sub-devices
+        over BLE itself, and a Govee device accepts one central at a time, so while Home
+        Assistant holds a strip's link the sync centre cannot complete the handover: the group
+        reports that member as `1` (connecting) rather than `2` (connected), and stays there
+        until we happen to let go.
+
+        A bare disconnect is not enough for the same reason -- the next poll reconnects.  The
+        HOLD is what makes the release useful, and it has to cover the whole session rather than
+        just the handover: measured on hardware, a sync centre that loses the race never
+        retries, so a window that closes early loses the member permanently.
+
+        The device is not touched during the hold; its state stays at its last known values, and
+        normal polling resumes when the window expires.  `seconds=0` clears an existing hold.
+        """
+        self._ble_hold_until = time.monotonic() + seconds if seconds > 0 else None
+        await self.disconnect()
 
     async def disconnect(
         self,
