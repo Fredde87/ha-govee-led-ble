@@ -267,3 +267,45 @@ def test_modes_the_swept_device_refused_are_not_claimed_by_it():
     for model, profile in MODEL_PROFILES.items():
         if model == "H61F5":
             assert not set(profile.music_modes) & refused, f"{model} claims a refused mode"
+    assert len(MODEL_PROFILES["H617A"].music_modes) == 11
+    assert len(MUSIC_MODE_SLUGS) > 11
+    assert set(MODEL_PROFILES["H617A"].music_modes) < set(MUSIC_MODE_SLUGS)
+
+
+def test_h66a0_profile_declares_its_measured_surface():
+    profile = MODEL_PROFILES["H66A0"]
+    assert profile.support_quality is SupportQuality.COMPATIBLE
+    assert MODEL_PROFILES["H66A0"].command_grammar == "H617A"
+    assert MODEL_PROFILES["H66A0"].status_grammar == "H66A0"
+    # The SKU is its own; only the wire format is shared with the H617A.
+    assert protocol_model("H66A0") == "H66A0"
+
+    assert profile.state_readable and profile.supports_color_mode_readback
+    assert profile.supports_rgb and profile.supports_color_temperature
+    assert profile.supports_scenes and profile.supports_custom_effects
+    assert profile.supports_multi_layered_effects
+    assert profile.supports_music_mode and profile.supports_music_color
+    assert profile.supports_video_mode and profile.supports_video_sound_effects
+    assert profile.supports_relative_brightness
+
+    assert profile.supports_segments and profile.segment_count == 14
+    assert profile.segment_group_size == 4
+    assert profile.segment_group_count == 4
+    assert profile.whole_device_mask == 0x7FFF
+    # A cut strip reports its own length, so the device's answer wins over the declared count.
+    assert profile.segment_count_from_ic_probe
+
+    assert profile.pact == "tvlightv4"
+    assert not profile.uses_h6199_video_body
+    assert profile.scene_catalogue_sku == "H66A0"
+
+
+def test_h66a0_reads_the_domains_its_capabilities_require():
+    profile = MODEL_PROFILES["H66A0"]
+    # Every capability that needs a read-back must name the domain that provides it, or the
+    # capability is claimed without a way to confirm it.
+    assert ReadDomain.SEGMENTS in profile.read_domains
+    assert ReadDomain.COLOUR_MODE in profile.read_domains
+    assert ReadDomain.DISPLAY_SETTING in profile.read_domains
+    assert ReadDomain.RELATIVE_BRIGHTNESS in profile.read_domains
+    assert profile.setup_required_read_domains <= profile.read_domains
