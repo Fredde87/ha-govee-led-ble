@@ -23,7 +23,10 @@ from custom_components.ha_govee_led_ble.const import (
 )
 from custom_components.ha_govee_led_ble.coordinator import GoveeBLECoordinator
 from custom_components.ha_govee_led_ble.coordinator_expectations import expectations_from_packet
-from custom_components.ha_govee_led_ble.generated_protocol_adapter import ProtocolParseRejection
+from custom_components.ha_govee_led_ble.generated_protocol_adapter import (
+    H66A0StatusReply,
+    ProtocolParseRejection,
+)
 from custom_components.ha_govee_led_ble.transport import WRITE_UUID, xor_checksum
 
 _GENERATED_DIR = os.environ.get("KAITAI_GENERATED_DIR")
@@ -206,10 +209,14 @@ def test_command_and_status_fields_are_meaningful() -> None:
     status = _parse(StatusReply, STATUS_SEGMENTS)
     assert status.domain.name == "segments"
     assert status.body.group == 1
+    # Three records and a validated zero tail.  The H617A pages three at a time; a device
+    # that pages four has its own status grammar rather than widening this one, which is
+    # what keeps the zero check here meaningful.
     assert [
         (segment.brightness, segment.colour.red, segment.colour.green, segment.colour.blue)
         for segment in status.body.segments
     ] == [(100, 255, 136, 13)] * 3
+    assert list(status.body.unused) == [0] * 4
 
     h617a_query = _parse(StatusQuery, H617A_SEGMENT_QUERY)
     h6199_query = _parse(H6199StatusQuery, H6199_SEGMENT_QUERY)
@@ -307,15 +314,12 @@ async def test_four_slot_profile_observes_every_declared_domain(hass, monkeypatc
         generated_protocol_adapter.parse_status_result(first, "H617A").rejection
         is ProtocolParseRejection.SCHEMA_REJECTED
     )
-    assert get_profile("H66A0") is UNSUPPORTED_PROFILE
-    assert (
-        generated_protocol_adapter.parse_status_result(first, "H66A0").rejection
-        is ProtocolParseRejection.UNSUPPORTED_MODEL
-    )
-    assert (
-        generated_protocol_adapter.parse_command_result(command, "H66A0").rejection
-        is ProtocolParseRejection.UNSUPPORTED_MODEL
-    )
+    # The real H66A0 IS a supported model now, and parses through its own status grammar
+    # while sharing the H617A's command grammar.  These assertions previously recorded that
+    # it was unsupported, which is what adding the profile changes.
+    assert get_profile("H66A0") is not UNSUPPORTED_PROFILE
+    assert generated_protocol_adapter.parse_status_result(first, "H66A0").parser == "h66a0_status_reply"
+    assert generated_protocol_adapter.parse_command_result(command, "H66A0").parsed is not None
 
     for frame in (final, first, first, third):
         coordinator._notify_callback(None, bytearray(frame))
@@ -510,3 +514,67 @@ REJECTED_ROOTS = (
 def test_critical_invalid_shapes_are_rejected(root_type: type[Any], raw_hex: str) -> None:
     with pytest.raises(KaitaiStructError):
         _parse(root_type, bytes.fromhex(raw_hex))
+
+
+# Frames captured from the Govee app driving an H66A0.  Raw hex is the replay input, so a
+# schema correction is checked against what the vendor actually sent rather than against a
+# frame this repository built for itself.
+H66A0_BLACK_BORDER_ON = bytes.fromhex("33a90b0101000000000000000000000000000091")
+H66A0_BLACK_BORDER_OFF = bytes.fromhex("33a90b0100000000000000000000000000000090")
+H66A0_BLACK_SCREEN_ON = bytes.fromhex("33a90a0601022c01cc0600000000000000000072")
+H66A0_BLACK_SCREEN_OFF = bytes.fromhex("33a90a060001f000cc06000000000000000000ad")
+H66A0_SEGMENT_PAGE_FULL = bytes.fromhex("aaa50164e5444464ffae5464ffae5464cf2e2e24")
+H66A0_SEGMENT_PAGE_PARTIAL = bytes.fromhex("aaa50464dc3b3b64e54444000000000000000032")
+
+
+@pytest.mark.parametrize(
+    ("frame", "expected"),
+    [
+        pytest.param(H66A0_BLACK_BORDER_ON, 1, id="black border on"),
+        pytest.param(H66A0_BLACK_BORDER_OFF, 0, id="black border off"),
+    ],
+)
+def test_captured_black_border_writes_parse(frame: bytes, expected: int) -> None:
+    command = _parse(CommandWrite, frame)
+    assert command.opcode.name == "display_setting"
+    assert command.body.setting == 0x0B
+    assert command.body.payload.is_on == expected
+
+
+@pytest.mark.parametrize(
+    ("frame", "expected"),
+    [
+        pytest.param(H66A0_BLACK_SCREEN_ON, 1, id="black screen on"),
+        pytest.param(H66A0_BLACK_SCREEN_OFF, 0, id="black screen off"),
+    ],
+)
+def test_captured_black_screen_writes_parse(frame: bytes, expected: int) -> None:
+    command = _parse(CommandWrite, frame)
+    assert command.opcode.name == "display_setting"
+    assert command.body.setting == 0x0A
+    assert command.body.payload.is_on == expected
+
+
+def test_a_captured_segment_page_carries_only_the_segments_it_reaches() -> None:
+    """Four records a page, and the last page carries the remainder rather than padding.
+
+    All four pages of one read, captured from the app, confirm the geometry: 4 + 4 + 4 + 2 = 14,
+    which is this device's segment count.  Three per page would reach eleven, so the stride is
+    not a free choice.  The record count is derived from the page index, so a short final page
+    is a short list rather than empty records a caller has to recognise and discard.
+    """
+    for frame, group, expected in (
+        (H66A0_SEGMENT_PAGE_FULL, 1, 4),
+        (H66A0_SEGMENT_PAGE_PARTIAL, 4, 2),
+    ):
+        page = _parse(H66A0StatusReply, frame)
+        assert page.body.group == group
+        assert page.body.num_segments == len(page.body.segments) == expected
+
+    full = _parse(H66A0StatusReply, H66A0_SEGMENT_PAGE_FULL)
+    assert [(s.colour.red, s.colour.green, s.colour.blue) for s in full.body.segments] == [
+        (0xE5, 0x44, 0x44),
+        (0xFF, 0xAE, 0x54),
+        (0xFF, 0xAE, 0x54),
+        (0xCF, 0x2E, 0x2E),
+    ]
