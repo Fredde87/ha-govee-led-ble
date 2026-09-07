@@ -62,8 +62,8 @@ class ReadDomain(StrEnum):
     DISPLAY_SETTING = "display_setting"
     RELATIVE_BRIGHTNESS = "relative_brightness"
     SEGMENTS = "segments"
-    CAMERA_INSTALL = "camera_install"
     IC_SEGMENT_COUNT = "ic_segment_count"
+    CAMERA_INSTALL = "camera_install"
     OTHER = "other"
 
 
@@ -106,6 +106,7 @@ class ModelProfile:
     video_white_balance_default: int = 17
     supports_relative_brightness: bool = False
     supports_blank_screen: bool = False
+    supports_black_border: bool = False
     music_modes: tuple[str, ...] = ()
     music_sensitivity_min: int = 0
     music_sensitivity_max: int = 99
@@ -551,6 +552,7 @@ MODEL_PROFILES: dict[str, ModelProfile] = {
                 ReadDomain.RELATIVE_BRIGHTNESS,
                 ReadDomain.SEGMENTS,
                 ReadDomain.IC_SEGMENT_COUNT,
+                ReadDomain.CAMERA_INSTALL,
             }
         ),
         setup_required_read_domains=frozenset(
@@ -572,6 +574,12 @@ MODEL_PROFILES: dict[str, ModelProfile] = {
         video_modes=("movie", "game"),
         supports_video_saturation=True,
         supports_video_sound_effects=True,
+        # All three are attested by the vendor app writing them to this device: two
+        # white-balance values plus an auto-run trigger, four black-screen writes, and
+        # black-border removal both on and off.
+        supports_white_balance=True,
+        supports_blank_screen=True,
+        supports_black_border=True,
         supports_dreamview=True,
         supports_relative_brightness=True,
         music_modes=_H66A0_MUSIC_MODES,

@@ -1749,7 +1749,11 @@ class GoveeBLECoordinator(_ActiveModeMixin, _DisplaySettingsMixin, _DreamviewMix
                         self._camera_needs_full_read = False
                         async with self._lock:
                             await self._probe_camera(full=True)
-                    elif self.profile.can_read(ReadDomain.CAMERA_INSTALL) and self.camera_installed is False:
+                    # `is not True` rather than `is False`: None is the un-probed state, so
+                    # keying on False means the first probe is never sent and the verdict
+                    # stays None for the life of the entry -- which also leaves the video
+                    # registers unread, since those are fetched once a camera is found.
+                    elif self.profile.can_read(ReadDomain.CAMERA_INSTALL) and self.camera_installed is not True:
                         async with self._lock:
                             await self._probe_camera(full=False)
                     full = self._keep_alive_ticks % STATE_QUERY_EVERY_N_KEEP_ALIVES == 0
