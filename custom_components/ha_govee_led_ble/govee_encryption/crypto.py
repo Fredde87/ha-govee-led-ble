@@ -13,11 +13,20 @@ no ``secretCode`` are involved.
 
 from __future__ import annotations
 
+import io
 import os
 import struct
+from importlib import import_module
+from typing import Any, cast
 
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from kaitaistruct import KaitaiStream
+
+GoveeHandshake = cast(
+    Any,
+    import_module("custom_components.ha_govee_led_ble.generated_protocol.govee_handshake").GoveeHandshake,
+)
 
 # App-global constants from Govee Home 7.5.30 (com.govee.encryp.LibTools).
 KEY_HANDSHAKE = bytes.fromhex("FC03783C7C42CB83E202A1643648AFF6")  # LibTools.a()
@@ -119,6 +128,20 @@ def is_handshake_response(frame: bytes) -> bool:
     return len(frame) >= 2 and frame[0] == MAGIC and frame[1] == CMD_SESSION
 
 
+def _parse_handshake_response_envelope(frame: bytes) -> Any:
+    """The response's byte layout, per `govee_handshake.ksy`.  No cryptography here."""
+    parsed = GoveeHandshake.HandshakeResponse(KaitaiStream(io.BytesIO(frame)))
+    parsed._read()
+    return parsed
+
+
+def _parse_handshake_plaintext(plain: bytes) -> Any:
+    """What the response's ciphertext opens to, per `govee_handshake.ksy`."""
+    parsed = GoveeHandshake.HandshakePlaintext(KaitaiStream(io.BytesIO(plain)))
+    parsed._read()
+    return parsed
+
+
 def parse_handshake_response(frame: bytes) -> tuple[bytes, bytes, bytes]:
     """-> ``(device ivKey, sku, mac in wire order)``.
 
@@ -128,15 +151,20 @@ def parse_handshake_response(frame: bytes) -> tuple[bytes, bytes, bytes]:
     frame = bytes(frame)
     if not is_handshake_response(frame) or len(frame) < 16:
         raise GoveeCryptoError(f"not a 0xE711 response: {frame[:4].hex()}")
-    if frame[2] != 0x00:
-        raise GoveeCryptoError(f"device refused key negotiation: status={frame[2]:#04x}")
+    envelope = _parse_handshake_response_envelope(frame)
+    if envelope.status != 0x00:
+        raise GoveeCryptoError(f"device refused key negotiation: status={envelope.status:#04x}")
     try:
-        plain = AESGCM(KEY_HANDSHAKE).decrypt(frame[3:15], frame[15:], frame[:15])
+        # AAD is the first 15 bytes: the response has no tagLen, so it is one shorter than the
+        # request's.  The structure is described in tools/ble/kaitai/govee_handshake.ksy; only
+        # the cryptography is here.
+        plain = AESGCM(KEY_HANDSHAKE).decrypt(envelope.iv, envelope.sealed, frame[:15])
     except Exception as err:  # InvalidTag and friends
         raise GoveeCryptoError(f"handshake response failed authentication: {err}") from err
     if len(plain) != 19:
         raise GoveeCryptoError(f"unexpected handshake plaintext length {len(plain)}")
-    return plain[0:8], plain[8:13], plain[13:19]
+    fields = _parse_handshake_plaintext(plain)
+    return fields.device_iv_key, fields.sku, fields.mac_wire_order
 
 
 def seal(plaintext: bytes, iv_key: bytes, device_key: bytes, counter: int) -> bytes:
