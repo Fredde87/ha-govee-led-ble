@@ -20,6 +20,10 @@ CommandWrite = cast(
     Any,
     import_module("custom_components.ha_govee_led_ble.generated_protocol.command_write").CommandWrite,
 )
+DreamviewReply = cast(
+    Any,
+    import_module("custom_components.ha_govee_led_ble.generated_protocol.dreamview_reply").DreamviewReply,
+)
 H6199CommandWrite = cast(
     Any,
     import_module("custom_components.ha_govee_led_ble.generated_protocol.h6199_command_write").H6199CommandWrite,
@@ -214,6 +218,28 @@ def _parse_xor_frame(
     except KaitaiStructError, UnicodeDecodeError:
         return ProtocolParseResult(None, parser, ProtocolParseRejection.SCHEMA_REJECTED)
     return ProtocolParseResult(parsed, parser, None)
+
+
+def parse_dreamview_reply(frame: bytes) -> Any:
+    """Parse one `aa 60` reply through its generated structure.
+
+    Model-independent: only a sync centre answers 0x60, and the layout is the same wherever it
+    does.  The sub-command is checked by the grammar rather than by the caller, so reading one
+    reply as another raises instead of producing a plausible-looking body.
+    """
+    if len(frame) != 20:
+        raise ValueError(f"a Govee frame is 20 bytes, got {len(frame)}")
+    if xor_checksum(frame[:-1]) != frame[-1]:
+        raise ValueError("DreamView reply failed its checksum")
+    parsed = DreamviewReply(KaitaiStream(io.BytesIO(frame)))
+    try:
+        parsed._read()
+    except Exception as err:  # noqa: BLE001 -- the grammar's own validation failure
+        # The header is validated by the grammar rather than by hand, so a frame that is not a
+        # DreamView reply surfaces as a Kaitai validation error.  Callers here expect ValueError,
+        # so it is translated rather than leaked.
+        raise ValueError(f"not a DreamView reply: {frame[:2].hex()}") from err
+    return parsed
 
 
 def parse_status_result(frame: bytes, model: str = "H617A") -> ProtocolParseResult:

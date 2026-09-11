@@ -217,8 +217,8 @@ async def test_reading_the_group_answers_two_questions_and_invents_no_third(coor
     app reads back here as a member count and its settings, with the members anonymous --
     which `identify_dreamview_members` then resolves by observation, not by guessing.
     """
-    digest = bytes.fromhex("aa600c01343b010101370000000000000000009e")
-    members = bytes.fromhex("aa60050202000000000000000000000000000015")
+    digest = bytes.fromhex("aa600c01343b01010137000000000000000000fe")
+    members = bytes.fromhex("aa600502020000000000000000000000000000cf")
 
     # Fed through the NOTIFICATION HANDLER, not written into the reply cache.  A request and a
     # parser can each work while the operation still never receives the reply -- which is exactly

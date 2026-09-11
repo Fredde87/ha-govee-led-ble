@@ -15,6 +15,7 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from .generated_protocol_adapter import DreamviewReply, parse_dreamview_reply
 from .transport import fragment_a3
 
 # The `aa` status header, for the two 0x60 replies read here as raw bodies.
@@ -159,62 +160,35 @@ class DreamviewState:
 
 
 def parse_dreamview_digest(frame: bytes) -> DreamviewState:
-    """Parse `aa 60 0c`, which returns the group's settings in one frame.
+    """Parse `aa 60 0c`, the group's settings in one frame.
 
-    Field order is correlated against the individual reads and writes in the same capture, not
-    assumed. Two digests were taken, before and after the owner changed things:
-
-        01 64 32 00 00 01 35        01 34 3b 01 01 01 37
-
-      * [1] 0x64 -> 0x34 tracks `aa 60 03`, which answered 0x64 then `34 51 44`.
-      * [2] 0x32 -> 0x3b tracks the saturation writes (`33 60 09`).
-      * [3] 0x00 -> 0x01 tracks sound effects being switched on (`33 60 0b 01 ..`).
-      * [4] 0x00 -> 0x01 appears only after the two `33 60 0a` colour-mode writes.
-      * [6] 0x35 -> 0x37 matches the LAST softness written before the second digest,
-            `33 60 0b 01 37`.
-
-    Byte [5] is 0x01 in both snapshots and is NOT the same-brightness toggle: `aa 60 04` read
-    0x01 at the first digest, and same-brightness was switched OFF (`33 60 04 00`) before the
-    second, yet [5] stayed 0x01. It is left unnamed rather than guessed; read `aa 60 04` for the
-    real same-brightness state.
+    Field order and the unnamed byte are documented on `digest_body` in
+    `tools/ble/kaitai/dreamview_reply.ksy`, where the structure now lives.
     """
-    body = _dreamview_reply_body(frame, DREAMVIEW_SUB_DIGEST, minimum=7)
+    parsed = parse_dreamview_reply(frame)
+    if parsed.sub != DreamviewReply.DreamviewSub.digest:
+        raise ValueError(f"expected DreamView sub 0x{DREAMVIEW_SUB_DIGEST:02x}, got 0x{int(parsed.sub.value):02x}")
+    body = parsed.body
     return DreamviewState(
-        is_on=bool(body[0]),
-        brightness=body[1],
-        saturation=body[2],
-        sound_effects=bool(body[3]),
-        colour_mode=body[4],
-        sound_effects_softness=body[6],
+        is_on=bool(body.is_on),
+        brightness=body.brightness,
+        saturation=body.saturation,
+        sound_effects=bool(body.sound_effects),
+        colour_mode=body.colour_mode,
+        sound_effects_softness=body.sound_effects_softness,
     )
 
 
 def parse_dreamview_members(frame: bytes) -> tuple[int, ...]:
     """Parse `aa 60 05` into one connection state per sub-device slot.
 
-    Ten slots, matching the app's own maximum. Trailing zero slots are kept rather than trimmed,
-    so the index of a state is the index of its sub-device.
+    Ten slots, matching the app's own maximum.  Trailing zero slots are kept rather than
+    trimmed, so the index of a state is the index of its sub-device.
     """
-    body = _dreamview_reply_body(frame, DREAMVIEW_SUB_SUBDEVICE, minimum=10)
-    return tuple(body[:10])
-
-
-def _dreamview_reply_body(frame: bytes, sub: int, *, minimum: int) -> bytes:
-    """Validate a `aa 60 <sub>` reply and return its payload.
-
-    Checks the sub-command byte as well as the header, because every DreamView reply shares the
-    same first two bytes and reading one as another would silently produce plausible nonsense.
-    """
-    if len(frame) != 20:
-        raise ValueError(f"a Govee frame is 20 bytes, got {len(frame)}")
-    if frame[0] != STATUS_HEADER or frame[1] != DREAMVIEW_PACKET_TYPE:
-        raise ValueError(f"not a DreamView reply: {frame[:2].hex()}")
-    if frame[2] != sub:
-        raise ValueError(f"expected DreamView sub 0x{sub:02x}, got 0x{frame[2]:02x}")
-    body = frame[3:19]
-    if len(body) < minimum:
-        raise ValueError(f"DreamView sub 0x{sub:02x} needs {minimum} payload bytes")
-    return body
+    parsed = parse_dreamview_reply(frame)
+    if parsed.sub != DreamviewReply.DreamviewSub.subdevice:
+        raise ValueError(f"expected DreamView sub 0x{DREAMVIEW_SUB_SUBDEVICE:02x}, got 0x{int(parsed.sub.value):02x}")
+    return tuple(parsed.body.slots)
 
 
 def build_dreamview_group(members: Sequence[DreamviewMember]) -> list[bytes]:
