@@ -22,6 +22,7 @@ from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.components import bluetooth
+from homeassistant.helpers import entity_registry as er
 
 from .const import CONF_DREAMVIEW_MEMBERS, DOMAIN
 from .coordinator_base import _CoordinatorBase
@@ -88,6 +89,53 @@ class _DreamviewMixin(_CoordinatorBase):
         candidates.sort(key=lambda item: str(item["address"]))
         return candidates
 
+    def _sibling_for(self, address: str) -> Any | None:
+        """The coordinator of another config entry holding `address`, if it is set up here."""
+        for entry in self.hass.config_entries.async_entries(DOMAIN):
+            sibling = getattr(entry, "runtime_data", None)
+            if sibling is not None and sibling is not self and getattr(sibling, "address", None) == address:
+                return sibling
+        return None
+
+    def _set_member_entities_disabled(self, address: str, *, disabled: bool) -> None:
+        """Disable or restore the standalone entities of a device this centre owns.
+
+        While a device is in a group its link belongs to the sync centre, and only the master is
+        connectable -- the sub-device refuses a central outright.  So its standalone entities
+        cannot work, and leaving them enabled offers controls that accept a command and do
+        nothing.
+
+        `RegistryEntryDisabler.INTEGRATION` is the honest attribution: the integration did this,
+        not the user, so the UI says so and a user's own decision to disable something is never
+        overwritten.  Entities rather than the config entry, because `ConfigEntryDisabler` has
+        only `USER` -- disabling the entry would record a user action that never happened.
+        """
+        registry = er.async_get(self.hass)
+        disabler = er.RegistryEntryDisabler.INTEGRATION if disabled else None
+        for entry in self.hass.config_entries.async_entries(DOMAIN):
+            sibling = getattr(entry, "runtime_data", None)
+            if sibling is None or getattr(sibling, "address", None) != address:
+                continue
+            for entity in er.async_entries_for_config_entry(registry, entry.entry_id):
+                # Only ever undo our own: a user's disable stays.
+                if not disabled and entity.disabled_by is not er.RegistryEntryDisabler.INTEGRATION:
+                    continue
+                if entity.disabled_by is disabler:
+                    continue
+                registry.async_update_entity(entity.entity_id, disabled_by=disabler)
+
+    def _set_member_owned(self, address: str, *, owned: bool) -> None:
+        """Record that this centre holds `address`, and stop or resume polling it.
+
+        The sibling coordinator keeps running -- only its entities are disabled -- so it has to
+        be told not to poll, or it spends the session attempting a connection the device cannot
+        accept, competing for the radio the centre is using.
+        """
+        sibling = self._sibling_for(address)
+        if sibling is not None:
+            sibling.dreamview_owner_address = self.address if owned else None
+        self._set_member_entities_disabled(address, disabled=owned)
+
     def _require_dreamview(self, action: str) -> None:
         if not self.profile.supports_dreamview:
             raise ValueError(f"{self.model} cannot host a DreamView group ({action})")
@@ -107,6 +155,19 @@ class _DreamviewMixin(_CoordinatorBase):
         async with self._control_lock:
             for frame in build_dreamview_group(members):
                 await self.send_command(frame)
+        # Ownership transfers after the upload has gone out.  Doing it first would disable the
+        # entities of a group that then failed to form.
+        for member in members:
+            self._set_member_owned(member.address, owned=True)
+        # Record who was taken, in the same place `async_identify_dreamview_members` records
+        # it.  The delete path releases from this mapping, so without it a centre whose owner
+        # never ran identify takes its members' entities and never gives them back -- the
+        # addresses are known here, from the caller, so there is nothing to discover.
+        if (entry := self.config_entry) is not None:
+            taken = {str(index): member.address for index, member in enumerate(members)}
+            self.hass.config_entries.async_update_entry(
+                entry, options={**entry.options, CONF_DREAMVIEW_MEMBERS: taken}
+            )
 
     async def async_set_dreamview_switch(self, on: bool) -> None:
         """Turn the DreamView group on or off (`33 60 01 {on, 1}`).
@@ -303,3 +364,12 @@ class _DreamviewMixin(_CoordinatorBase):
         self._require_dreamview("delete group")
         async with self._control_lock:
             await self.send_command(build_dreamview_delete())
+        # Ownership returns to each member: entities restored, polling resumed.  After the delete
+        # rather than before, so a failed attempt does not hand back a device the centre holds.
+        for address in list(self.dreamview_members.values()):
+            self._set_member_owned(address, owned=False)
+        # The group is gone, so the record of who was in it must go too -- otherwise the next
+        # delete would hand back devices this centre no longer holds.
+        if (entry := self.config_entry) is not None and CONF_DREAMVIEW_MEMBERS in entry.options:
+            remaining = {k: v for k, v in entry.options.items() if k != CONF_DREAMVIEW_MEMBERS}
+            self.hass.config_entries.async_update_entry(entry, options=remaining)

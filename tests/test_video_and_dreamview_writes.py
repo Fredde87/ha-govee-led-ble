@@ -9,8 +9,10 @@ back when the write fails -- so Home Assistant never shows a setting the device 
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from homeassistant.helpers import entity_registry as er
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.ha_govee_led_ble.const import MODEL_PROFILES
+from custom_components.ha_govee_led_ble.const import CONF_DREAMVIEW_MEMBERS, CONF_MODEL, DOMAIN, MODEL_PROFILES
 from custom_components.ha_govee_led_ble.coordinator import GoveeBLECoordinator
 from custom_components.ha_govee_led_ble.coordinator_status import ParsedMode
 from custom_components.ha_govee_led_ble.dreamview import DreamviewMember
@@ -22,6 +24,16 @@ from custom_components.ha_govee_led_ble.video_settings import (
 )
 
 _URL = "homeassistant://ha-govee-led-ble/editor/test-entry"
+
+
+def _entry_backed(hass, address: str, model: str) -> GoveeBLECoordinator:
+    """A coordinator with a config entry, which ownership transfer needs to find siblings by."""
+    coordinator = GoveeBLECoordinator(hass, address, model, configuration_url=_URL)
+    entry = MockConfigEntry(domain=DOMAIN, unique_id=address, data={CONF_MODEL: model})
+    entry.add_to_hass(hass)
+    coordinator.config_entry = entry
+    entry.runtime_data = coordinator
+    return coordinator
 
 
 @pytest.fixture
@@ -328,3 +340,128 @@ async def test_a_video_write_is_refused_on_a_model_without_the_capability(hass) 
         await strip.async_set_black_border_removal(True)
     with pytest.raises(ValueError, match="blank-screen detection"):
         await strip.async_set_video_blank_screen(True)
+
+
+async def test_a_grouped_member_loses_its_standalone_entities_and_stops_polling(hass) -> None:
+    """Ownership transfers to the sync centre when a group forms.
+
+    Only the master is connectable once a group exists -- a sub-device refuses a central
+    outright -- so a member's standalone entities cannot work and polling it cannot succeed.
+    Both are therefore stopped rather than left to fail repeatedly.
+    """
+    centre = _entry_backed(hass, "AA:BB:CC:DD:EE:FF", "H66A0")
+    centre._client = MagicMock(is_connected=True)
+    centre.send_command = AsyncMock()  # type: ignore[method-assign]
+    member = _entry_backed(hass, "11:22:33:44:55:66", "H61F5")
+
+    registry = er.async_get(hass)
+    entity = registry.async_get_or_create(
+        "light", DOMAIN, "112233445566", config_entry=member.config_entry, suggested_object_id="member"
+    )
+    assert entity.disabled_by is None
+    assert member.dreamview_owner_address is None
+
+    await centre.async_set_dreamview_group([DreamviewMember("11:22:33:44:55:66", (1, 1, 2, 3, 4, 4))])
+
+    # Annotated so the assert above cannot narrow the attribute for the read below.
+    owner: str | None = member.dreamview_owner_address
+    assert owner == "AA:BB:CC:DD:EE:FF"
+    disabled = registry.async_get(entity.entity_id)
+    assert disabled is not None
+    assert disabled.disabled_by is er.RegistryEntryDisabler.INTEGRATION
+    # The coordinator is still loaded, so the poll itself has to decline.
+    assert await member._async_update_data() == member._state_snapshot()
+
+
+async def test_deleting_the_group_hands_every_member_back(hass) -> None:
+    """The other half: standalone control is restored, and polling resumes."""
+    centre = _entry_backed(hass, "AA:BB:CC:DD:EE:FF", "H66A0")
+    centre._client = MagicMock(is_connected=True)
+    centre.send_command = AsyncMock()  # type: ignore[method-assign]
+    member = _entry_backed(hass, "11:22:33:44:55:66", "H61F5")
+    hass.config_entries.async_update_entry(
+        centre.config_entry, options={CONF_DREAMVIEW_MEMBERS: {"0": "11:22:33:44:55:66"}}
+    )
+
+    registry = er.async_get(hass)
+    entity = registry.async_get_or_create(
+        "light", DOMAIN, "112233445566", config_entry=member.config_entry, suggested_object_id="member2"
+    )
+    registry.async_update_entity(entity.entity_id, disabled_by=er.RegistryEntryDisabler.INTEGRATION)
+    member.dreamview_owner_address = "AA:BB:CC:DD:EE:FF"
+
+    await centre.async_delete_dreamview_group()
+
+    # Annotated so the assert above cannot narrow the attribute for the read below.
+    released: str | None = member.dreamview_owner_address
+    assert released is None
+    handed_back = registry.async_get(entity.entity_id)
+    assert handed_back is not None
+    assert handed_back.disabled_by is None
+
+
+async def test_a_users_own_disable_is_never_undone(hass) -> None:
+    """Releasing a member restores only what the integration disabled.
+
+    Someone who deliberately disabled an entity must not have it switched back on by a group
+    being deleted, which is why the disabler is recorded rather than assumed.
+    """
+    centre = _entry_backed(hass, "AA:BB:CC:DD:EE:FF", "H66A0")
+    centre._client = MagicMock(is_connected=True)
+    centre.send_command = AsyncMock()  # type: ignore[method-assign]
+    member = _entry_backed(hass, "11:22:33:44:55:66", "H61F5")
+    hass.config_entries.async_update_entry(
+        centre.config_entry, options={CONF_DREAMVIEW_MEMBERS: {"0": "11:22:33:44:55:66"}}
+    )
+
+    registry = er.async_get(hass)
+    entity = registry.async_get_or_create(
+        "light", DOMAIN, "112233445566", config_entry=member.config_entry, suggested_object_id="member3"
+    )
+    registry.async_update_entity(entity.entity_id, disabled_by=er.RegistryEntryDisabler.USER)
+
+    await centre.async_delete_dreamview_group()
+
+    reread = registry.async_get(entity.entity_id)
+    assert reread is not None
+    assert reread.disabled_by is er.RegistryEntryDisabler.USER
+
+
+async def test_deleting_a_group_hands_back_members_identify_never_named(hass) -> None:
+    """The strand: a centre whose owner never ran identify must still release its members.
+
+    Ownership is taken from the caller's member list but was released from the slot -> address
+    mapping only `async_identify_dreamview_members` writes.  A user who creates a group and
+    deletes it -- never running identify, which is a separate service -- got their member's
+    entities disabled permanently.  Reproduced on hardware: the device group was deleted and
+    `light.govee_h1a42` stayed `disabled_by=integration`.
+    """
+    centre = _entry_backed(hass, "AA:BB:CC:DD:EE:FF", "H66A0")
+    centre._client = MagicMock(is_connected=True)
+    centre.send_command = AsyncMock()  # type: ignore[method-assign]
+    member = _entry_backed(hass, "11:22:33:44:55:66", "H61F5")
+
+    registry = er.async_get(hass)
+    entity = registry.async_get_or_create(
+        "light",
+        DOMAIN,
+        "112233445566",
+        config_entry=member.config_entry,
+        suggested_object_id="stranded",
+    )
+    # Deliberately NOT seeding CONF_DREAMVIEW_MEMBERS: that is what identify would have written.
+    centre_entry = centre.config_entry
+    assert centre_entry is not None
+    assert CONF_DREAMVIEW_MEMBERS not in centre_entry.options
+
+    await centre.async_set_dreamview_group([DreamviewMember("11:22:33:44:55:66", (1, 1, 2, 3, 4, 4))])
+    taken = registry.async_get(entity.entity_id)
+    assert taken is not None
+    assert taken.disabled_by is er.RegistryEntryDisabler.INTEGRATION
+
+    await centre.async_delete_dreamview_group()
+
+    handed_back = registry.async_get(entity.entity_id)
+    assert handed_back is not None
+    assert handed_back.disabled_by is None, "member left disabled after the group was deleted"
+    assert CONF_DREAMVIEW_MEMBERS not in centre_entry.options

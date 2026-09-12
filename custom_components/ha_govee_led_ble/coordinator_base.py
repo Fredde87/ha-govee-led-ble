@@ -55,6 +55,9 @@ class _CoordinatorBase(DataUpdateCoordinator[dict[str, Any]]):
     video_settings: dict[int, list[int]]
     camera_installed: bool | None
     _dreamview_frames: dict[int, bytes]
+    # The sync centre that owns this device's BLE link, or None when it is standalone.  Set
+    # by the centre's coordinator when a group forms, and cleared when one is deleted.
+    dreamview_owner_address: str | None
 
     # Supplied by the concrete coordinator.  Declared here so a write mixin can reach the
     # connection and the transmit path without importing the coordinator and creating a cycle.

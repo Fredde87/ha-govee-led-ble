@@ -203,6 +203,7 @@ class GoveeBLECoordinator(_ActiveModeMixin, _DisplaySettingsMixin, _DreamviewMix
         self.video_settings: dict[int, list[int]] = {}
         self.camera_installed: bool | None = None
         self._dreamview_frames: dict[int, bytes] = {}
+        self.dreamview_owner_address: str | None = None
         self._probe_camera_replies = 0
         self._probe_other_replies = 0
         self._camera_silent_strikes = 0
@@ -543,6 +544,11 @@ class GoveeBLECoordinator(_ActiveModeMixin, _DisplaySettingsMixin, _DreamviewMix
         first_refresh = not self._first_refresh_done
         self._first_refresh_done = True
         if self.hass.is_stopping:
+            return self._state_snapshot()
+        if self.dreamview_owner_address is not None:
+            # A sync centre holds this device's link.  Only the master is connectable while a
+            # group exists, so polling here cannot succeed and would spend the session competing
+            # for the radio the centre is using.  Report the last known state instead.
             return self._state_snapshot()
         if self._ble_hold_until is not None:
             if time.monotonic() < self._ble_hold_until:
