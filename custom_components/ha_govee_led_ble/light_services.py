@@ -133,21 +133,40 @@ class _GoveeLightServicesMixin(_GoveeLightOwner):
             resolved_softness = (
                 c.video_sound_effects_softness if sound_effects_softness is None else sound_effects_softness
             )
-            packet = build_video_mode(
-                mode,
-                resolved_fs,
-                resolved_saturation,
-                resolved_sound,
-                resolved_softness,
-                c.model,
-            )
-
-            async def apply() -> None:
-                await self.coordinator.send_command(
-                    build_power(True, self.coordinator.model)
+            if c.profile.uses_h6199_video_body:
+                packet = build_video_mode(
+                    mode,
+                    resolved_fs,
+                    resolved_saturation,
+                    resolved_sound,
+                    resolved_softness,
+                    c.model,
                 )
-                self.coordinator.is_on = True
-                await self.coordinator.send_command(packet)
+
+                async def apply() -> None:
+                    await self.coordinator.send_command(
+                        build_power(True, self.coordinator.model)
+                    )
+                    self.coordinator.is_on = True
+                    await self.coordinator.send_command(packet)
+
+            else:
+                # The H66A0 family writes a different six-byte body, and building it needs the
+                # picture preset and the reserved byte the device last reported -- state the
+                # coordinator holds and `build_video_mode` never receives, which is why that
+                # builder refuses these models outright.  `async_enter_video_mode` is the path
+                # that has both, and the one `set_video_settings` already uses.
+                async def apply() -> None:
+                    await self.coordinator.send_command(
+                        build_power(True, self.coordinator.model)
+                    )
+                    self.coordinator.is_on = True
+                    await self.coordinator.async_enter_video_mode(
+                        game_mode=mode == "game",
+                        saturation=resolved_saturation,
+                        sound_effects=resolved_sound,
+                        sound_effects_softness=resolved_softness,
+                    )
 
             await apply()
             await self._refresh_with_retry(
