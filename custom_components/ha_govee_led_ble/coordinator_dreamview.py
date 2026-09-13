@@ -165,9 +165,7 @@ class _DreamviewMixin(_CoordinatorBase):
         # addresses are known here, from the caller, so there is nothing to discover.
         if (entry := self.config_entry) is not None:
             taken = {str(index): member.address for index, member in enumerate(members)}
-            self.hass.config_entries.async_update_entry(
-                entry, options={**entry.options, CONF_DREAMVIEW_MEMBERS: taken}
-            )
+            self.hass.config_entries.async_update_entry(entry, options={**entry.options, CONF_DREAMVIEW_MEMBERS: taken})
 
     async def async_set_dreamview_switch(self, on: bool) -> None:
         """Turn the DreamView group on or off (`33 60 01 {on, 1}`).

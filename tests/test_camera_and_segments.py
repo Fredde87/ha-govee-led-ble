@@ -229,5 +229,3 @@ async def test_the_camera_probe_actually_writes_its_frame(hass):
 
     sent = {(frame[0], frame[1]) for frame in client.frames}
     assert (0xAA, 0x32) in sent, f"camera probe wrote no aa32 frame; sent={sorted(sent)}"
-
-

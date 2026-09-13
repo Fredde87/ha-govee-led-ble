@@ -3,7 +3,7 @@
 import base64
 from dataclasses import replace
 
-from .const import protocol_model
+from .const import get_profile, protocol_model
 from .effect_domain import LayeredScene, PaletteScene
 from .generated_protocol_adapter import build_h617a_scene, build_h6199_scene
 from .layered_scene import CatalogueRef, LayeredEffect
@@ -64,7 +64,11 @@ def build_native_scene_packets(
         canonical_body=canonical_body,
     )
     upload = fragment_a3(scene.scene_type, payload) if payload else []
-    resolved = protocol_model(model)
+    # The activation frame rides the effect grammar the profile declares, not the SKU: an
+    # H66A0 speaks H617A here even though `protocol_model` calls it an H66A0, and keying on
+    # the SKU leaves every model that is not literally H617A/H6199 with no way to apply a
+    # scene at all.  Same axis the effect decoder already resolves on.
+    resolved = get_profile(model).effect_grammar or protocol_model(model)
     if resolved == "H6199":
         activation = build_h6199_scene(scene.code, scene.music_code)
     elif resolved == "H617A":
