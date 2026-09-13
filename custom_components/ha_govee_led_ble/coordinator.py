@@ -1168,8 +1168,15 @@ class GoveeBLECoordinator(_ActiveModeMixin, _DisplaySettingsMixin, _DreamviewMix
                     return
                 observed = self._apply_segment_group(generated)
             elif domain is StatusDomain.CAMERA_INSTALL:
-                self._probe_camera_replies += 1
-                self.camera_installed = True
+                # The byte is an install type, and the app treats 0 and a timeout as the same
+                # answer -- no camera (CheckCameraController.parseCheckCamera vs
+                # EventCheckCamera.sendFail).  Reading the value rather than the arrival means a
+                # module that answers "not installed" is believed, instead of being counted as
+                # present because it replied at all.
+                installed = int(generated.body.install_type) != 0
+                if installed:
+                    self._probe_camera_replies += 1
+                self.camera_installed = installed
             elif domain is StatusDomain.IC_SEGMENT_COUNT and self.profile.segment_count_from_ic_probe:
                 self._note_ic_segment_count(int(generated.body.ic_count), int(generated.body.segment_count))
             elif domain is StatusDomain.FIRMWARE:

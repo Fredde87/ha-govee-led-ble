@@ -229,3 +229,34 @@ async def test_the_camera_probe_actually_writes_its_frame(hass):
 
     sent = {(frame[0], frame[1]) for frame in client.frames}
     assert (0xAA, 0x32) in sent, f"camera probe wrote no aa32 frame; sent={sorted(sent)}"
+
+
+def test_the_camera_register_is_an_install_type_not_an_arrival_flag() -> None:
+    """`aa 32` carries a value, and zero means no camera.
+
+    The vendor app reads the first body byte as `installType`
+    (pact_tvlightv4 CheckCameraController.parseCheckCamera) and publishes 0 from its timeout
+    path (EventCheckCamera.sendFail), so "no reply" and "replied 0" are one answer. Treating
+    the arrival of the frame as the signal would report a module that answers "not installed"
+    as present.
+
+    The installed frame is the one an H66A0 with the module attached actually sent.
+    """
+    from custom_components.ha_govee_led_ble.coordinator_status import decode_status_frame_result
+
+    installed = bytes.fromhex("aa32010100000000000000000000000000000098")
+    parsed = decode_status_frame_result(installed, "H66A0").parsed
+    assert parsed is not None
+    body = parsed.generated.body
+    assert body.install_type == 1
+
+    absent = bytearray(installed)
+    absent[2] = 0x00
+    absent[19] = 0
+    absent[19] = 0
+    for b in absent[:19]:
+        absent[19] ^= b
+    parsed_absent = decode_status_frame_result(bytes(absent), "H66A0").parsed
+    assert parsed_absent is not None
+    body_absent = parsed_absent.generated.body
+    assert body_absent.install_type == 0, "a zero install type must decode as zero, not as arrival"

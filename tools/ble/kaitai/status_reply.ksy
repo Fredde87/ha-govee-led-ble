@@ -189,13 +189,19 @@ types:
         repeat: eos
   camera_install_body:
     doc: |
-      Answer to aa 32. An H66A0 with the camera module attached replied 01 01 on
-      2026-08-23; the same device with the module unplugged did not reply at all. So the
-      ARRIVAL of this frame is the install signal. What the two bytes mean individually is
-      not established -- there is no second observation to compare them against -- and
-      they are deliberately left unnamed rather than guessed at.
+      Answer to aa 32. The first byte is an INSTALL TYPE, not a flag, and zero means no
+      camera: the vendor app reads exactly this byte
+      (pact_tvlightv4 CheckCameraController.parseCheckCamera -> parseValidBleBytes[0])
+      and hands it on as `installType`, while its timeout path
+      (EventCheckCamera.sendFail) publishes 0 for the same condition -- so "no reply" and
+      "replied 0" are one answer to the app, and arrival alone is NOT the signal.
+      Observed: an H66A0 with the module attached answered 01 01; the same device with the
+      module unplugged did not reply at all, and nor did it while the module was wedged.
+      The second byte has never been seen holding anything but 01 and is left opaque.
     seq:
-      - id: raw
+      - id: install_type
+        type: u1
+      - id: rest
         size-eos: true
   display_setting_body:
     doc: |
