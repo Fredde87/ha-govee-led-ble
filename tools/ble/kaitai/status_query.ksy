@@ -25,6 +25,7 @@ seq:
         'query_domain::gradual_change': zero_body
         'query_domain::segments': segment_query_body
         'query_domain::display_setting': display_setting_query_body
+        'query_domain::relative_brightness': relative_brightness_query_body
   - id: checksum
     type: u1
 enums:
@@ -43,6 +44,7 @@ enums:
     0xa3: gradual_change
     0xa5: segments
     0xa9: display_setting
+    0xae: relative_brightness
 types:
   zero_body:
     seq:
@@ -66,6 +68,19 @@ types:
         valid:
           min: 1
           max: 5
+      - id: zeros
+        type: u1
+        valid: 0
+        repeat: eos
+  relative_brightness_query_body:
+    doc: |
+      Needs its 0x01 selector.  The bare form answers `00 00`, which is where an earlier
+      "zero zones" reading came from -- the device was answering a question it had not been
+      asked.  Confirmed on an H66A0 on 2026-08-24: `33 ae 01 04 3c 3c 3c 3c` read back as 60
+      and `... 32 32 32 32` restored the 50 it started at.
+    seq:
+      - id: selector
+        contents: [0x01]
       - id: zeros
         type: u1
         valid: 0

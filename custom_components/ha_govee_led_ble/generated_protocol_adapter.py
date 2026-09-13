@@ -180,8 +180,8 @@ def _serialize_xor(root: Any, length: int = 20) -> bytes:
 _STATUS_ROOTS = {
     "H617A": ("status_reply", StatusReply),
     "H6199": ("h6199_status_reply", H6199StatusReply),
-    # Its segment page is fourteen segments at four records; the H617A's is fifteen at three, so
-    # it cannot share that root even though it shares the command grammar.
+    # Its segment page is fourteen segments at four records; the H617A's is fifteen at three,
+    # so it cannot share that root even though it shares the command grammar.
     "H66A0": ("h66a0_status_reply", H66A0StatusReply),
 }
 _COMMAND_ROOTS = {
