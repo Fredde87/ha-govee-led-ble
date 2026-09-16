@@ -70,6 +70,8 @@ class ReadDomain(StrEnum):
     DISPLAY_SETTING = "display_setting"
     RELATIVE_BRIGHTNESS = "relative_brightness"
     SEGMENTS = "segments"
+    IC_SEGMENT_COUNT = "ic_segment_count"
+    CAMERA_INSTALL = "camera_install"
     INSTALLATION_DIRECTION = "installation_direction"
     CAMERA_HEALTH = "camera_health"
     OTHER = "other"
@@ -124,6 +126,10 @@ class ModelProfile:
     dreamview_operations: frozenset[str] = frozenset()
     dreamview_reads: frozenset[str] = frozenset()
     dreamview_max_sub_devices: int = 0
+    # The wire dialect this model speaks, named rather than inferred from the SKU.
+    pact: str = "generic"
+    # The declared segment count was cross-checked against the device's own aa 40 reply.
+    segment_count_from_ic_probe: bool = False
     video_firmware_conditions: tuple[VideoFirmwareCondition, ...] = ()
     # Exact-product revision policy, independent of compatible wire grammars.
     video_revision_policy: str | None = None
@@ -310,6 +316,98 @@ MUSIC_MODE_SLUGS: dict[str, int] = {
     "bloom": 0x30,
     "shiny": 0x31,
 }
+
+# The music modes backed by a `music_variants` entry, which is what the effect selector is
+# built from. Six further ids were measured on this family and are named in
+# govee_common.ksy::music_mode so a frame carrying one can be parsed and built; they are not
+# declared on a profile, because declaring a mode with no variant advertises something the
+# selector cannot reach.
+# The four music effects these strips accept from a bare activation. NOT the four they
+# support: the H1A42 answers sixteen in the app, and its capture shows why -- ids 3..6 are
+# sent bare, while 7, 48, 49, 50, 51, 53, 55, 81, 132, 133, 146 and 163 are each preceded
+# by an `a3 00` parameter upload (palette, fade, piece, speed), acked `a3 41 result=OK`,
+# and only then activated. This integration sends the bare `33 05 13 <id>` alone, so the
+# device ignores every id that needs its parameters first, and the list is trimmed to what
+# it can actually deliver rather than to what the hardware can do. The H66A0 accepts all
+# eleven of its own bare, which is why it keeps the longer list.
+#
+# Worth knowing when measuring this: an ignored write still reads back as applied, because
+# optimistic state shows the requested mode until the next colour-mode reply corrects it.
+# Scored against a forced device read, twice per device, with an 11/11 H66A0 control.
+_CLASSIC_MUSIC_MODES = (
+    "energetic",
+    "rhythm",
+    "spectrum",
+    "rolling",
+)
+_REACHABLE_MUSIC_MODES = (
+    "energetic",
+    "rhythm",
+    "spectrum",
+    "rolling",
+    "separation",
+    "hopping",
+    "piano_keys",
+    "fountain",
+    "day_and_night",
+    "bloom",
+    "shiny",
+)
+
+
+_H66A0_MUSIC_MODES = (
+    "energetic",
+    "rhythm",
+    "spectrum",
+    "rolling",
+    "separation",
+    "hopping",
+    "piano_keys",
+    "fountain",
+    "day_and_night",
+    "bloom",
+    "shiny",
+    "flowing_light",
+    "color_painting",
+    "meteor",
+    "windmill",
+    "splash",
+    "spring",
+)
+_H1A42_MUSIC_MODES = (
+    "energetic",
+    "rhythm",
+    "spectrum",
+    "rolling",
+    "separation",
+    "hopping",
+    "fountain",
+    "day_and_night",
+    "bloom",
+    "shiny",
+    "splash",
+    "spring",
+    "ripple",
+    "orbit",
+)
+_H61F5_MUSIC_MODES = (
+    "energetic",
+    "rhythm",
+    "spectrum",
+    "rolling",
+    "separation",
+    "hopping",
+    "piano_keys",
+    "fountain",
+    "day_and_night",
+    "bloom",
+    "shiny",
+    "splash",
+    "spring",
+    "ripple",
+    "orbit",
+)
+
 
 _H6199_MUSIC_MODES = ("energetic", "rhythm", "spectrum", "rolling")
 
@@ -522,6 +620,181 @@ MODEL_PROFILES: dict[str, ModelProfile] = {
         max_color_temp_kelvin=6500,
         whole_device_mask=0x007F,
         scene_catalogue_sku="H6076",
+    ),
+    "H66A0": ModelProfile(
+        "Govee TV Backlight 3 Pro (H66A0)",
+        support_quality=SupportQuality.COMPATIBLE,
+        # Command frames are the H617A's; the status side is not -- this device's
+        # segment page is 14 segments at four records per page against the H617A's
+        # 15 at three, which is why the two grammars are named separately.
+        command_grammar="H617A",
+        status_grammar="H66A0",
+        effect_grammar="H617A",
+        read_domains=frozenset(
+            {
+                ReadDomain.POWER,
+                ReadDomain.BRIGHTNESS,
+                ReadDomain.COLOUR_MODE,
+                ReadDomain.FIRMWARE,
+                ReadDomain.HARDWARE,
+                ReadDomain.SUBORDINATE_20,
+                ReadDomain.SUBORDINATE_21,
+                ReadDomain.DISPLAY_SETTING,
+                ReadDomain.RELATIVE_BRIGHTNESS,
+                ReadDomain.SEGMENTS,
+                ReadDomain.IC_SEGMENT_COUNT,
+                ReadDomain.CAMERA_INSTALL,
+            }
+        ),
+        setup_required_read_domains=frozenset(
+            {
+                ReadDomain.POWER,
+                ReadDomain.BRIGHTNESS,
+                ReadDomain.COLOUR_MODE,
+            }
+        ),
+        supports_rgb=True,
+        supports_color_temperature=True,
+        supports_custom_effects=True,
+        supports_multi_layered_effects=True,
+        supports_scenes=True,
+        pact="tvlightv4",
+        # Video mode is measured on this device and deliberately not claimed. Its body is its
+        # own grammar ("H66A0-video", encoded by h66a0_video_command) and that body carries a
+        # picture preset and an opaque byte with no defaults -- by design, since unknown bytes
+        # are not invented. They are read from the device's colour-mode reply, which reports
+        # them only while it is ALREADY in a video mode, so a cold start can never enter one:
+        # `build_video_mode` refuses with "refresh the device first". Claiming it advertised
+        # `Video: Movie` and `Video: Game` in the effect list, and both failed every attempt.
+        # The app's own frames show what the missing pair would be (`33 05 00 <source>
+        # <preset 0x08..0x0b> <saturation> 00 ...`, opaque 0), so this needs a way for a
+        # profile to declare those defaults rather than more measurement.
+        # The video frames ride the H617A command grammar; only the body differs.
+        # All three are attested by the vendor app writing them to this device: two
+        # white-balance values plus an auto-run trigger, four black-screen writes, and
+        # black-border removal both on and off.
+        dreamview_max_sub_devices=10,
+        # White balance, relative brightness, blank-screen and black-border readback are all
+        # measured on this device and none are claimed. `aa a9 06` answers `01 32`: a one-byte
+        # scalar 50, matching the 0-100 control the APK's WhiteBalanceDialog lists for this
+        # SKU. It stays unclaimed because `display_setting_body` types a payload only for
+        # black_border_removal, so setting 6 parses as raw bytes and the scalar readback
+        # branch raises `AttributeError: 'bytes' object has no attribute 'value'` inside the
+        # notification callback on every such reply, losing that notification. The others
+        # need the same widening their query builders do: those resolve through
+        # `_video_grammar` and only emit for H6099/H6199, so an H617A-grammar device cannot
+        # build them at all. The setter stays unclaimed regardless: Controller4WhiteBalance
+        # is a calibration register with no clean undo.
+        music_modes=_REACHABLE_MUSIC_MODES,
+        supports_music_color=True,
+        whole_device_mask=0x7FFF,
+        # The device reports 14 segments and 90 lamp beads through its aa 40 probe.  The
+        # count is read from the device rather than fixed here, because a strip that has
+        # been cut reports its own length.
+        segment_count=14,
+        segment_group_size=4,
+        segment_count_from_ic_probe=True,
+        supports_segment_writes=True,
+        scene_catalogue_sku="H66A0",
+    ),
+    "H1A42": ModelProfile(
+        "Govee LED Strip Light 2 (H1A42)",
+        support_quality=SupportQuality.COMPATIBLE,
+        command_grammar="H617A",
+        # Every status body this device sends is the H617A's, except the segment page: it
+        # pages four records at a time, where the H617A root reads three. Measured on the
+        # wire -- `aa a5 01` carries four brightness/RGB records and `aa a5 02` carries the
+        # fifth followed by zeroed slots. The H66A0 root is exactly that combination (H617A
+        # bodies, four-record page) and is referenced rather than copied. Read through the
+        # H617A root instead, page one fails the schema's zero check on what it treats as
+        # unused octets and page two parses three records where one is meant, so every
+        # segment readback is discarded and every segment write reports failure after
+        # applying correctly.
+        status_grammar="H66A0",
+        effect_grammar="H617A",
+        read_domains=frozenset(
+            {
+                ReadDomain.POWER,
+                ReadDomain.BRIGHTNESS,
+                ReadDomain.COLOUR_MODE,
+                ReadDomain.FIRMWARE,
+                ReadDomain.HARDWARE,
+                ReadDomain.SUBORDINATE_20,
+                ReadDomain.SUBORDINATE_21,
+                ReadDomain.SEGMENTS,
+                ReadDomain.IC_SEGMENT_COUNT,
+            }
+        ),
+        setup_required_read_domains=frozenset(
+            {
+                ReadDomain.POWER,
+                ReadDomain.BRIGHTNESS,
+                ReadDomain.COLOUR_MODE,
+            }
+        ),
+        supports_rgb=True,
+        supports_color_temperature=True,
+        supports_custom_effects=True,
+        supports_multi_layered_effects=True,
+        supports_scenes=True,
+        music_modes=_CLASSIC_MUSIC_MODES,
+        whole_device_mask=0x7FFF,
+        # Five segments describes a strip that has been cut; the probe reports the installed
+        # length, which is what the colour paths must use.
+        segment_count=5,
+        segment_group_size=4,
+        segment_count_from_ic_probe=True,
+        supports_segment_writes=True,
+        scene_catalogue_sku="H1A42",
+    ),
+    "H61F5": ModelProfile(
+        "Govee Strip Light 2 Pro (H61F5)",
+        support_quality=SupportQuality.COMPATIBLE,
+        command_grammar="H617A",
+        # Every status body this device sends is the H617A's, except the segment page: it
+        # pages four records at a time, where the H617A root reads three. Measured on the
+        # wire -- `aa a5 01` carries four brightness/RGB records and `aa a5 02` carries the
+        # fifth followed by zeroed slots. The H66A0 root is exactly that combination (H617A
+        # bodies, four-record page) and is referenced rather than copied. Read through the
+        # H617A root instead, page one fails the schema's zero check on what it treats as
+        # unused octets and page two parses three records where one is meant, so every
+        # segment readback is discarded and every segment write reports failure after
+        # applying correctly.
+        status_grammar="H66A0",
+        effect_grammar="H617A",
+        read_domains=frozenset(
+            {
+                ReadDomain.POWER,
+                ReadDomain.BRIGHTNESS,
+                ReadDomain.COLOUR_MODE,
+                ReadDomain.FIRMWARE,
+                ReadDomain.HARDWARE,
+                ReadDomain.SUBORDINATE_20,
+                ReadDomain.SUBORDINATE_21,
+                ReadDomain.SEGMENTS,
+                ReadDomain.IC_SEGMENT_COUNT,
+            }
+        ),
+        setup_required_read_domains=frozenset(
+            {
+                ReadDomain.POWER,
+                ReadDomain.BRIGHTNESS,
+                ReadDomain.COLOUR_MODE,
+            }
+        ),
+        supports_rgb=True,
+        supports_color_temperature=True,
+        supports_custom_effects=True,
+        supports_multi_layered_effects=True,
+        supports_scenes=True,
+        music_modes=_CLASSIC_MUSIC_MODES,
+        supports_music_color=True,
+        whole_device_mask=0x7FFF,
+        segment_count=5,
+        segment_group_size=4,
+        segment_count_from_ic_probe=True,
+        supports_segment_writes=True,
+        scene_catalogue_sku="H61F5",
     ),
     "H6102": ModelProfile(
         "H6102 LED Strip",

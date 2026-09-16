@@ -4193,3 +4193,75 @@ def test_unknown_model_encoders_fail_closed() -> None:
 def test_h6199_subordinate_queries_exclude_identity_domain() -> None:
     with pytest.raises(ValueError, match="0x20 or 0x21"):
         build_h6199_subordinate_query(0x14)
+
+
+def _coordinator_for(hass, model: str) -> GoveeBLECoordinator:
+    entry = MockConfigEntry(domain=DOMAIN, unique_id=f"AA:BB:CC:DD:EE:{model[-2:]}")
+    entry.add_to_hass(hass)
+    with current_entry.set(entry):
+        return GoveeBLECoordinator(
+            hass,
+            f"AA:BB:CC:DD:EE:{model[-2:]}",
+            model,
+            configuration_url=_CONFIGURATION_URL,
+        )
+
+
+# Captured from the devices on 2026-09-17. Four records on page one, the fifth on page two
+# followed by the slots a five-segment strip does not have, which the device zero-fills.
+_H1A42_PAGES = (
+    "aaa5013cff00003cff0000480000ff64d9e1ff1a",
+    "aaa50264d9e1ff000000000000000000000000ae",
+)
+
+
+@pytest.mark.parametrize("model", ["H1A42", "H61F5"])
+def test_five_segment_pages_are_observed_not_discarded(hass, model):
+    """Both pages must land: read through the H617A root, page one fails the schema's
+    zero check and page two reports three records where one is meant, so segment state
+    never leaves "optimistic" and every segment write reports failure after applying."""
+    coord = _coordinator_for(hass, model)
+    for frame in _H1A42_PAGES:
+        coord._notify_callback(None, bytearray(bytes.fromhex(frame)))
+    assert coord.segment_state_source == "observed"
+    assert coord.segment_colors == [(255, 0, 0), (255, 0, 0), (0, 0, 255), (217, 225, 255), (217, 225, 255)]
+    assert coord.segment_brightness == [60, 60, 72, 100, 100]
+
+
+def test_surplus_page_slots_must_be_zero(hass):
+    """The trim discards only the device's padding. A nonzero record past the declared
+    count means the profile no longer describes the strip, which is not padding."""
+    coord = _coordinator_for(hass, "H1A42")
+    coord._notify_callback(None, bytearray(bytes.fromhex(_H1A42_PAGES[0])))
+    parsed = parse_status(bytes.fromhex(_H1A42_PAGES[1]), "H1A42")
+    assert parsed is not None
+    assert parsed.body.num_segments == 4
+    records = list(parsed.body.segments)
+    records[1] = SimpleNamespace(brightness=100, colour=SimpleNamespace(red=1, green=2, blue=3))
+    body = SimpleNamespace(group=2, segments=records, num_segments=4)
+    with pytest.raises(ValueError):
+        coord._apply_segment_group(SimpleNamespace(body=body))
+    assert coord.segment_state_source != "observed"
+
+
+def test_h66a0_display_setting_reply_does_not_raise(hass):
+    """`aa a9 06` answers a one-byte scalar that display_setting_body leaves raw. Claiming
+    scalar white-balance readback armed a branch reading .value off those bytes, raising
+    inside the notification callback and losing the notification."""
+    coord = _coordinator_for(hass, "H66A0")
+    coord._notify_callback(None, bytearray(bytes.fromhex("aaa9060132000000000000000000000000000036")))
+    assert coord.white_balance_scalar is None
+
+
+@pytest.mark.parametrize("model", ["H1A42", "H61F5"])
+def test_five_segment_strips_claim_only_the_low_id_music_modes(model):
+    """These two accept ids 3-6 from a bare activation and ignore the rest, because the
+    rest need an `a3 00` parameter upload first that this integration does not send for
+    music -- their captures show sixteen ids driven that way. The list therefore tracks
+    what can be delivered, not what the hardware supports. The H66A0 accepts all eleven
+    of its own bare."""
+    claimed = set(MODEL_PROFILES[model].music_modes)
+    assert claimed == {"energetic", "rhythm", "spectrum", "rolling"}
+    assert {MUSIC_MODE_SLUGS[slug] for slug in claimed} == {3, 4, 5, 6}
+    assert not claimed & {"bloom", "shiny", "separation", "hopping", "piano_keys", "fountain", "day_and_night"}
+    assert len(MODEL_PROFILES["H66A0"].music_modes) == 11

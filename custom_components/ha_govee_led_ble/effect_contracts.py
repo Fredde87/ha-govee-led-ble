@@ -481,6 +481,17 @@ RELEASE_CAPABILITY_CONTRACT: Final = (
     *(capability for capability in _RELEASE_CAPABILITY_BASE if capability.model == "H617A"),
     *(replace(capability, model="H617E") for capability in _RELEASE_CAPABILITY_BASE if capability.model == "H617A"),
     *(capability for capability in _RELEASE_CAPABILITY_BASE if capability.model == "H6199"),
+    # Scene selection applied on hardware and confirmed by read-back on all three: the device
+    # reports the scene it was given. They share the H617A effect grammar, so the H617A entry is
+    # reused rather than regraded. Only NATIVE_SCENES is claimed -- the palette and layered
+    # workflows have not been exercised on these devices.
+    *(
+        replace(capability, model=sku)
+        for sku in ("H66A0", "H1A42", "H61F5")
+        for capability in _RELEASE_CAPABILITY_BASE
+        if capability.model == "H617A"
+        and capability.workflow in {CapabilityWorkflow.NATIVE_SCENES, CapabilityWorkflow.NATIVE_MUSIC}
+    ),
 )
 
 

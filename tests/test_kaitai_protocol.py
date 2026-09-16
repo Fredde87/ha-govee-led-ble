@@ -1024,15 +1024,13 @@ async def test_four_slot_profile_observes_every_declared_domain(hass, monkeypatc
         generated_protocol_adapter.parse_status_result(first, "H617A").rejection
         is ProtocolParseRejection.SCHEMA_REJECTED
     )
-    assert get_profile("H66A0") is UNSUPPORTED_PROFILE
-    assert (
-        generated_protocol_adapter.parse_status_result(first, "H66A0").rejection
-        is ProtocolParseRejection.UNSUPPORTED_MODEL
-    )
-    assert (
-        generated_protocol_adapter.parse_command_result(command, "H66A0").rejection
-        is ProtocolParseRejection.UNSUPPORTED_MODEL
-    )
+    # The H66A0 is a registered model now, so it no longer rejects as unsupported: these three
+    # assertions recorded its absence. What they were really protecting is that this synthetic
+    # four-slot layout is not silently accepted by the H617A grammar, which the SCHEMA_REJECTED
+    # assertion above still covers.
+    assert get_profile("H66A0") is not UNSUPPORTED_PROFILE
+    assert generated_protocol_adapter.parse_status_result(first, "H66A0").parsed is not None
+    assert generated_protocol_adapter.parse_command_result(command, "H66A0").parsed is not None
 
     for frame in (final, first, first, third):
         coordinator._notify_callback(None, bytearray(frame))

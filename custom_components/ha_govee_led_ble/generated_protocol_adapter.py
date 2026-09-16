@@ -84,6 +84,10 @@ StatusReply = cast(
     Any,
     import_module("custom_components.ha_govee_led_ble.generated_protocol.status_reply").StatusReply,
 )
+H66A0StatusReply = cast(
+    Any,
+    import_module("custom_components.ha_govee_led_ble.generated_protocol.h66a0_status_reply").H66a0StatusReply,
+)
 H6199StatusReply = cast(
     Any,
     import_module("custom_components.ha_govee_led_ble.generated_protocol.h6199_status_reply").H6199StatusReply,
@@ -218,6 +222,9 @@ _STATUS_ROOTS = {
     "H6099": ("h6099_status_reply", H6099StatusReply),
     "H617A": ("status_reply", StatusReply),
     "H6199": ("h6199_status_reply", H6199StatusReply),
+    # Fourteen segments at four records a page, against the H617A's fifteen at three, so it
+    # cannot share that root even though it shares the command grammar.
+    "H66A0": ("h66a0_status_reply", H66A0StatusReply),
 }
 _COMMAND_ROOTS = {
     "H6099": ("h6099_command_write", H6099CommandWrite),

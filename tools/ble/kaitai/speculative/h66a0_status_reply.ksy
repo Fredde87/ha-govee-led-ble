@@ -16,12 +16,19 @@ doc: |
   reaches this device's fourteen segments; three per page would reach eleven.
   Unknowns: physical segment ordering and readback behaviour remain
   unqualified, and unused final-page slots have no established meaning or zero
-  constraint. Preserve their raw octets. No other status domains or models are
-  inferred, and this root is not a whole-family alias.
+  constraint. Preserve their raw octets. No other status domains are inferred.
 
   Selected as a runtime root because the H66A0 profile names it as its
   status_grammar: its pages cannot be read through the H617A's three-record
   layout, which is the concern this file was written for.
+
+  H1A42 and H61F5 name it too. Not as a family alias -- they are read here for
+  the one property this root exists for, a four-record page, having been
+  measured sending exactly that (`aa a5 01` four records, `aa a5 02` the fifth
+  then zeroed slots). Every other body they use is already the H617A's, which
+  is what this root references. Their five segments are fewer than the
+  fourteen parameterised here, so their final page arrives full and the
+  caller trims it against the profile's count.
 seq:
   - id: header
     contents: [0xaa]

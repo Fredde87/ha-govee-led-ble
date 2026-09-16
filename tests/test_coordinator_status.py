@@ -89,7 +89,10 @@ def test_production_three_record_status_contract(model: str) -> None:
         assert decode_status_frame_result(bytes(frame), model).rejection is ProtocolParseRejection.SCHEMA_REJECTED
     issue_frame = H("aaa50164e5444464ffae5464ffae5464cf2e2e24")
     assert decode_status_frame_result(issue_frame, model).rejection is ProtocolParseRejection.SCHEMA_REJECTED
-    assert decode_status_frame_result(issue_frame, "H66A0").rejection is ProtocolParseRejection.UNSUPPORTED_MODEL
+    # The H66A0 has its own status root now, so it accepts this four-slot layout rather than
+    # rejecting as an unknown model. The point of this test -- that the three-record H617A
+    # and H617E grammars refuse it -- is asserted above and is unchanged.
+    assert decode_status_frame_result(issue_frame, "H66A0").parsed is not None
 
 
 def test_h617a_colour_modes_preserve_scene_diy_and_music_semantics() -> None:

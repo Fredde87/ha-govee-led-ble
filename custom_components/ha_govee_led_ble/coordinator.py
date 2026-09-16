@@ -1334,7 +1334,12 @@ class GoveeBLECoordinator(_DreamviewMixin, _ActiveModeMixin):
             raise ValueError("invalid segment group for model")
         offset = (group - 1) * group_size
         expected_count = min(group_size, self.profile.segment_count - offset)
-        if type(count) is not int or count != expected_count or not isinstance(records, list) or len(records) != count:
+        if (
+            type(count) is not int
+            or not isinstance(records, list)
+            or len(records) != count
+            or not expected_count <= count <= group_size
+        ):
             raise ValueError("segment record count does not match model page")
         # Convert the entire page before touching an in-progress observation.
         try:
@@ -1342,6 +1347,17 @@ class GoveeBLECoordinator(_DreamviewMixin, _ActiveModeMixin):
             page_brightness = [int(r.brightness) for r in records]
         except (AttributeError, TypeError, ValueError) as err:
             raise ValueError("malformed segment record") from err
+        if count != expected_count:
+            # A root may read a longer page than the profile installs. H1A42 and H61F5 read
+            # through the H66A0's four-record page for five segments, so their final page
+            # arrives with three slots the model does not have, and the device zero-fills
+            # them. Only zeroes are surplus: a nonzero record beyond the declared count is a
+            # segment this model was not expected to have, which is a profile that no longer
+            # matches the device rather than padding to discard.
+            if any(any(colour) for colour in page_colours[expected_count:]) or any(page_brightness[expected_count:]):
+                raise ValueError("segment record beyond the model's declared count")
+            page_colours = page_colours[:expected_count]
+            page_brightness = page_brightness[:expected_count]
         colours = self._segment_query_colors
         brightness = self._segment_query_brightness
         if colours is None or brightness is None:
@@ -1349,8 +1365,8 @@ class GoveeBLECoordinator(_DreamviewMixin, _ActiveModeMixin):
             brightness = list(self.segment_brightness)
             self._segment_query_colors = colours
             self._segment_query_brightness = brightness
-        colours[offset : offset + count] = page_colours
-        brightness[offset : offset + count] = page_brightness
+        colours[offset : offset + expected_count] = page_colours
+        brightness[offset : offset + expected_count] = page_brightness
         self._segment_groups_observed.add(group)
         if len(self._segment_groups_observed) != self._segment_group_count:
             return ()

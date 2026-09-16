@@ -44,7 +44,10 @@ def device(hass, monkeypatch):
 
 @pytest.mark.parametrize("mode,source", [("movie", "00"), ("game", "01")])
 async def test_selector_compiled_and_recovery_preserve_values(device, monkeypatch, mode, source):
-    assert "H66A0" not in MODEL_PROFILES
+    # The H66A0 is now a registered profile. This test deliberately exercises the synthetic
+    # H7002 above rather than any real model, so the registration does not affect what is
+    # covered here; the assertion recorded an absence rather than protecting the test.
+    assert "H7002" in MODEL_PROFILES
     assert device.video_parameters == {"picture_preset": "delicate", "opaque": 0xA5}
     assert device._field_revisions["video_parameters"] == 1
 
