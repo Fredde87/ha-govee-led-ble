@@ -162,8 +162,10 @@ types:
 
       Read [2] as "a segment count on this model", not as a settled field for the family.
       The H6199 answers 38 to the same query, and 38 was positively excluded as its app
-      segment count, so a caller must decide per model whether to trust this byte -- see
-      ModelProfile.segment_count_from_ic_probe.
+      segment count, so a caller must decide per model whether to trust this byte --
+      ModelProfile.segment_count_from_ic_probe is that decision, and the H6199's is no.
+      Where it is yes, [2] replaces the profile's declared segment count, which is what a
+      cut strip needs: its installed length is known only to the device.
     seq:
       - id: ic_count
         type: u2be

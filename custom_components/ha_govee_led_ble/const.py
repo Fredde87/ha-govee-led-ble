@@ -129,7 +129,6 @@ class ModelProfile:
     # The wire dialect this model speaks, named rather than inferred from the SKU.
     pact: str = "generic"
     # The declared segment count was cross-checked against the device's own aa 40 reply.
-    segment_count_from_ic_probe: bool = False
     video_firmware_conditions: tuple[VideoFirmwareCondition, ...] = ()
     # Exact-product revision policy, independent of compatible wire grammars.
     video_revision_policy: str | None = None
@@ -167,6 +166,14 @@ class ModelProfile:
     music_requires_upload_ack: bool = False
     # Physical IC count is independent of logical segment_count. None means unknown.
     physical_ic_count: int | None = None
+    # Whether byte [2] of this model's `aa 40` reply is its segment count. Per-model because
+    # it is not a settled family field: the H6199 answers 38 there, which was positively
+    # excluded as its segment count. Off means the declared `segment_count` stands.
+    segment_count_from_ic_probe: bool = False
+    # The longest strip this model's status root can page. The probe may narrow the declared
+    # count or raise it up to here, never past: beyond it the root's own final page is shorter
+    # than the profile expects and every page is discarded again.
+    segment_probe_max: int = 0
     music_sensitivity_min: int = 0
     music_sensitivity_max: int = 99
     supports_music_color: bool = False
@@ -200,6 +207,8 @@ class ModelProfile:
             raise ValueError("Advanced DIY selector must be an unsigned 16-bit value")
         if type(self.dreamview_max_sub_devices) is not int or not 0 <= self.dreamview_max_sub_devices <= 255:
             raise ValueError("DreamView member capacity must be from 0 to 255")
+        if self.segment_count_from_ic_probe and not 0 < self.segment_probe_max:
+            raise ValueError("a probed segment count needs a segment_probe_max its root can page")
         if self.physical_ic_count is not None and (
             type(self.physical_ic_count) is not int or self.physical_ic_count <= 0
         ):
@@ -688,12 +697,12 @@ MODEL_PROFILES: dict[str, ModelProfile] = {
         music_modes=_REACHABLE_MUSIC_MODES,
         supports_music_color=True,
         whole_device_mask=0x7FFF,
-        # The device reports 14 segments and 90 lamp beads through its aa 40 probe.  The
-        # count is read from the device rather than fixed here, because a strip that has
-        # been cut reports its own length.
+        # Fourteen is the uncut length of this backlight, and the default until the device
+        # states its own: its aa 40 probe answers 14 segments and 90 lamp beads, measured.
         segment_count=14,
         segment_group_size=4,
         segment_count_from_ic_probe=True,
+        segment_probe_max=14,
         supports_segment_writes=True,
         scene_catalogue_sku="H66A0",
     ),
@@ -739,11 +748,13 @@ MODEL_PROFILES: dict[str, ModelProfile] = {
         supports_scenes=True,
         music_modes=_CLASSIC_MUSIC_MODES,
         whole_device_mask=0x7FFF,
-        # Five segments describes a strip that has been cut; the probe reports the installed
-        # length, which is what the colour paths must use.
+        # Five segments describes a strip that has been cut, so this is a default rather
+        # than a product length: the aa 40 probe answers with the installed length (5 here,
+        # against 11 lamp beads) and replaces it.
         segment_count=5,
         segment_group_size=4,
         segment_count_from_ic_probe=True,
+        segment_probe_max=14,
         supports_segment_writes=True,
         scene_catalogue_sku="H1A42",
     ),
@@ -793,6 +804,7 @@ MODEL_PROFILES: dict[str, ModelProfile] = {
         segment_count=5,
         segment_group_size=4,
         segment_count_from_ic_probe=True,
+        segment_probe_max=14,
         supports_segment_writes=True,
         scene_catalogue_sku="H61F5",
     ),

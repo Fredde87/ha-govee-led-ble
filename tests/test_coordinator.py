@@ -4265,3 +4265,53 @@ def test_five_segment_strips_claim_only_the_low_id_music_modes(model):
     assert {MUSIC_MODE_SLUGS[slug] for slug in claimed} == {3, 4, 5, 6}
     assert not claimed & {"bloom", "shiny", "separation", "hopping", "piano_keys", "fountain", "day_and_night"}
     assert len(MODEL_PROFILES["H66A0"].music_modes) == 11
+
+
+def _ic_probe_frame(segments: int, ic_count: int = 90) -> bytes:
+    body = ic_count.to_bytes(2, "big") + bytes([segments]) + bytes(14)
+    frame = bytes([0xAA, 0x40]) + body
+    checksum = 0
+    for byte in frame:
+        checksum ^= byte
+    return frame + bytes([checksum])
+
+
+@pytest.mark.parametrize(("probed", "expected"), [(5, 5), (8, 8), (14, 14)])
+def test_probed_segment_count_replaces_the_declared_one(hass, probed, expected):
+    """A cut strip's length is known only to the device. The declared count is a default."""
+    coord = _coordinator_for(hass, "H1A42")
+    assert coord.profile.segment_count == 5
+    coord._notify_callback(None, bytearray(_ic_probe_frame(probed)))
+    assert coord.profile.segment_count == expected
+    assert len(coord.segment_colors) == expected
+    assert len(coord.segment_brightness) == expected
+    assert coord.profile.segment_group_count == (expected + 3) // 4
+
+
+@pytest.mark.parametrize("probed", [0, 15, 200])
+def test_probed_segment_count_outside_the_root_s_paging_is_refused(hass, probed):
+    """Past segment_probe_max the root's own final page is shorter than the profile
+    expects and every page is discarded, so the declared count is the safer answer."""
+    coord = _coordinator_for(hass, "H1A42")
+    coord._notify_callback(None, bytearray(_ic_probe_frame(probed)))
+    assert coord.profile.segment_count == 5
+    assert len(coord.segment_colors) == 5
+
+
+def test_probed_segment_count_lets_a_longer_strip_read_its_pages(hass):
+    """The whole point: a 10-segment H1A42 pages 4+4+2, which the declared 5 rejects."""
+    coord = _coordinator_for(hass, "H1A42")
+    coord._notify_callback(None, bytearray(_ic_probe_frame(10)))
+    pages = [
+        bytes([0xAA, 0xA5, 1]) + bytes([50, 1, 2, 3] * 4),
+        bytes([0xAA, 0xA5, 2]) + bytes([60, 4, 5, 6] * 4),
+        bytes([0xAA, 0xA5, 3]) + bytes([70, 7, 8, 9] * 2) + bytes(8),
+    ]
+    for page in pages:
+        checksum = 0
+        for byte in page:
+            checksum ^= byte
+        coord._notify_callback(None, bytearray(page + bytes([checksum])))
+    assert coord.segment_state_source == "observed"
+    assert coord.segment_colors == [(1, 2, 3)] * 4 + [(4, 5, 6)] * 4 + [(7, 8, 9)] * 2
+    assert coord.segment_brightness == [50] * 4 + [60] * 4 + [70] * 2

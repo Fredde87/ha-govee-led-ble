@@ -536,6 +536,22 @@ def parse_boolean_control(generated: Any, model: str, *, profile: ModelProfile |
     return {control: bool(flag)}
 
 
+def build_ic_segment_count_query(model: str) -> bytes:
+    """Ask the device how many segments it actually has, for models that answer truthfully."""
+    profile = get_profile(model)
+    if not profile.segment_count_from_ic_probe:
+        raise ValueError(f"{model} does not read its segment count from the IC probe")
+    return _build_status_query("ic_segment_count", profile.command_grammar)
+
+
+def parse_ic_segment_count(generated: Any) -> int | None:
+    """Read the segment count from an `aa 40` reply, never the IC count beside it."""
+    if getattr(generated.domain, "name", None) != "ic_segment_count":
+        return None
+    count = int(generated.body.segment_count)
+    return count if count > 0 else None
+
+
 def build_physical_ic_count_query(model: str) -> bytes:
     if get_profile(model).command_grammar != "H6099":
         raise ValueError(f"{model} has no qualified physical IC query")

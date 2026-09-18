@@ -66,6 +66,7 @@ from .generated_protocol_adapter import (
     build_h6199_control,
     build_h6199_control_query,
     build_hardware_query,
+    build_ic_segment_count_query,
     build_physical_ic_count_query,
     build_power,
     build_power_query,
@@ -76,6 +77,7 @@ from .generated_protocol_adapter import (
     parse_command_ack_result,
     parse_command_result,
     parse_h6199_control,
+    parse_ic_segment_count,
     parse_physical_ic_count,
     require_profile_packet,
     upload_ack_subtype,
@@ -270,6 +272,8 @@ class GoveeBLECoordinator(_DreamviewMixin, _ActiveModeMixin):
         self.segment_brightness: list[int] = [100] * profile.segment_count
         self.segment_state_source = "initial"
         self.segment_state_observed_at: str | None = None
+        self._declared_segment_count = profile.segment_count
+        self._probed_segment_count: int | None = None
         self._segment_groups_observed: set[int] = set()
         self._segment_query_colors: list[tuple[int, int, int]] | None = None
         self._segment_query_brightness: list[int] | None = None
@@ -1114,6 +1118,11 @@ class GoveeBLECoordinator(_DreamviewMixin, _ActiveModeMixin):
         self.camera_status = "unknown"
         if self.profile.command_grammar == "H6099":
             self.profile = replace(self.profile, physical_ic_count=None)
+        if self._probed_segment_count is not None:
+            # A strip can be recut between sessions, so the declared count stands again
+            # until the device restates its own.
+            self._probed_segment_count = None
+            self._resize_segments(self._declared_segment_count)
         if self._client and self._client.is_connected:
             await self._disconnect_locked()
         elif self._client is not None:
@@ -1324,6 +1333,34 @@ class GoveeBLECoordinator(_DreamviewMixin, _ActiveModeMixin):
         self._segment_groups_observed.clear()
         self._segment_query_colors = None
         self._segment_query_brightness = None
+
+    def _resize_segments(self, count: int) -> None:
+        """Resize to a new segment count, discarding any observation mid-flight."""
+        if count == self.profile.segment_count and len(self.segment_colors) == count:
+            return
+        self.profile = replace(self.profile, segment_count=count)
+        colours = list(self.segment_colors)[:count]
+        brightness = list(self.segment_brightness)[:count]
+        colours.extend([self.rgb_color] * (count - len(colours)))
+        brightness.extend([100] * (count - len(brightness)))
+        self.segment_colors, self.segment_brightness = colours, brightness
+        # A page already buffered was measured against the old count and its groups no
+        # longer describe the same slots, so the observation restarts rather than mixing.
+        self._segment_query_colors = None
+        self._segment_query_brightness = None
+        self._segment_groups_observed.clear()
+        if self.segment_state_source == "observed":
+            self.segment_state_source = "initial"
+            self.segment_state_observed_at = None
+
+    def _apply_probed_segment_count(self, count: int) -> None:
+        """Take the device's own segment count, within what its status root can page."""
+        if not self.profile.segment_count_from_ic_probe or not 0 < count <= self.profile.segment_probe_max:
+            # Out of range means the profile does not describe this device; the declared
+            # count is the safer of two wrong answers, so it stands.
+            return
+        self._probed_segment_count = count
+        self._resize_segments(count)
 
     def _apply_segment_group(self, generated: Any) -> tuple[str, ...]:
         group = getattr(generated.body, "group", None)
@@ -1817,6 +1854,8 @@ class GoveeBLECoordinator(_DreamviewMixin, _ActiveModeMixin):
                 for field, control_value in control_values.items():
                     setattr(self, field, control_value)
                 observed = tuple(control_values)
+            elif (segments := parse_ic_segment_count(generated)) is not None:
+                self._apply_probed_segment_count(segments)
             elif (count := parse_physical_ic_count(generated)) is not None:
                 self.profile = replace(self.profile, physical_ic_count=count)
                 if self.model == "H6102":
@@ -2212,6 +2251,8 @@ class GoveeBLECoordinator(_DreamviewMixin, _ActiveModeMixin):
                 queries = [q for q, field in candidates if self._identity_field_incomplete(field)]
                 if self.profile.command_grammar == "H6099" and self.profile.physical_ic_count is None:
                     queries.append(build_physical_ic_count_query(self.model))
+                if self.profile.segment_count_from_ic_probe and self._probed_segment_count is None:
+                    queries.append(build_ic_segment_count_query(self.model))
                 for query in queries:
                     if generation != self._profile_generation:
                         break
