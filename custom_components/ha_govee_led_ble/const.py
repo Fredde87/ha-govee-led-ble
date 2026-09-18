@@ -226,6 +226,13 @@ class ModelProfile:
             raise ValueError("only one firmware condition per video control is supported")
         if self.read_domains and self.status_grammar is None:
             raise ValueError("read domains require a status grammar")
+        if not self.music_modes and (self.music_variants or self.supports_music_color):
+            # Mirrors the vendor app, which never leaves a music-capable device with an empty
+            # picker: where no list has been measured for the model, fall back to the modes a
+            # bare selector reaches on every device measured here. A profile that names its own
+            # modes -- which is every model whose music has actually been swept -- keeps them
+            # untouched and never reaches this.
+            object.__setattr__(self, "music_modes", _FALLBACK_MUSIC_MODES)
         if (
             self.read_domains
             & {
@@ -346,6 +353,23 @@ MUSIC_MODE_SLUGS: dict[str, int] = {
 # govee_common.ksy::music_mode so a frame carrying one can be parsed and built; they are not
 # declared on a profile, because declaring a mode with no variant advertises something the
 # selector cannot reach.
+# What a music-capable profile gets when it names no modes of its own. The vendor app has the
+# same guarantee and answers it with eight of its own codes (64, 65, 66, 67, 72, 80, 82, 83 --
+# JieZou, Windmill, Hooray, Zhanfang, YueDong, Huoju, Expansion, FlowingLight, read out of
+# ComposeMusicMode.getDefaultMusicEffect in 7.6.21). Those are deliberately NOT copied: not one
+# of them is accepted by any device measured here, so shipping them would advertise modes that
+# do nothing -- and several would need slugs invented, because their English labels sit behind
+# obfuscated methods.
+#
+# These four are the opposite: every H617A-family device measured accepts them from a bare
+# `33 05 13 <id>` with no parameter upload, so a profile that has not had its music swept still
+# gets a list that works rather than an empty picker.
+_FALLBACK_MUSIC_MODES = (
+    "energetic",
+    "rhythm",
+    "spectrum",
+    "rolling",
+)
 _REACHABLE_MUSIC_MODES = (
     "energetic",
     "rhythm",

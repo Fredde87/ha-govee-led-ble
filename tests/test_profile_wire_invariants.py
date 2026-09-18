@@ -334,3 +334,38 @@ def test_every_advertised_music_mode_has_a_way_to_be_applied(model: str) -> None
             # Parameters that are available must actually ride along; a mode whose payload is
             # withheld pending an unknown IC count is a different, declared case.
             assert len(packets) > 2, f"{model} music mode {slug} carries a template but sends no upload"
+
+
+@pytest.mark.parametrize("model", sorted(MODEL_PROFILES))
+def test_a_music_capable_profile_never_has_an_empty_list(model: str) -> None:
+    """The vendor app never leaves a music-capable device with an empty picker: an unknown one
+    falls back to eight of its own codes. We keep the guarantee, not the payload -- none of its
+    eight is accepted by any device measured here, and several would need slugs invented."""
+    profile = MODEL_PROFILES[model]
+    if profile.music_variants or profile.supports_music_color:
+        assert profile.music_modes, f"{model} claims music support with no modes behind it"
+    assert all(slug in MUSIC_MODE_SLUGS for slug in profile.music_modes), (
+        f"{model} names a music mode with no code in MUSIC_MODE_SLUGS"
+    )
+
+
+def test_a_music_capable_profile_that_names_nothing_falls_back() -> None:
+    """The fallback is for models whose music has not been swept -- not for ours, which name
+    their own. Every mode it offers must be one a bare selector reaches, since a profile with
+    no measured list has no parameter templates to upload either."""
+    from dataclasses import replace
+
+    from custom_components.ha_govee_led_ble.music_semantics import music_variant
+
+    unswept = replace(MODEL_PROFILES["H6076"], supports_music_color=True)
+    assert unswept.music_modes == ("energetic", "rhythm", "spectrum", "rolling")
+    for slug in unswept.music_modes:
+        variant = music_variant(unswept, MUSIC_MODE_SLUGS[slug])
+        assert variant is None or not variant.template, (
+            f"fallback mode {slug} needs a parameter upload, which an unswept profile cannot supply"
+        )
+    # A profile that claims no music at all is left alone, and ours keep what they measured.
+    assert MODEL_PROFILES["H6076"].music_modes == ()
+    assert len(MODEL_PROFILES["H66A0"].music_modes) == 17
+    for model in ("H1A42", "H61F5"):
+        assert len(MODEL_PROFILES[model].music_modes) == 16
