@@ -648,11 +648,8 @@ MODEL_PROFILES: dict[str, ModelProfile] = {
                 ReadDomain.HARDWARE,
                 ReadDomain.SUBORDINATE_20,
                 ReadDomain.SUBORDINATE_21,
-                ReadDomain.DISPLAY_SETTING,
-                ReadDomain.RELATIVE_BRIGHTNESS,
                 ReadDomain.SEGMENTS,
                 ReadDomain.IC_SEGMENT_COUNT,
-                ReadDomain.CAMERA_INSTALL,
             }
         ),
         setup_required_read_domains=frozenset(
