@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from custom_components.ha_govee_led_ble.const import MODEL_PROFILES, ReadDomain
+from custom_components.ha_govee_led_ble.const import MODEL_PROFILES, MUSIC_MODE_SLUGS, ReadDomain
 from custom_components.ha_govee_led_ble.coordinator_status import _STATUS_DOMAIN_NAMES
 
 _KAITAI = Path(__file__).resolve().parent.parent / "tools" / "ble" / "kaitai"
@@ -297,3 +297,40 @@ def test_every_declared_video_mode_can_be_built(model: str) -> None:
     for mode in profile.video_modes:
         frame = a.build_video_mode(mode, True, 50, False, 50, model, values=values)
         assert len(frame) == 20, f"{model} video mode {mode} built {len(frame)} bytes"
+
+
+# Measured on hardware 2026-09-18: with the palette and timings uploaded first the device
+# enters the mode every time; with the selector alone it never leaves the mode it is in.
+# Confirmed 11/11 on both strips. Other families are not listed because they were not measured
+# -- the H617E sends its selector first and there is no evidence here that it is wrong to.
+_UPLOAD_FIRST_MEASURED = ("H1A42", "H61F5")
+
+
+@pytest.mark.parametrize("model", _UPLOAD_FIRST_MEASURED)
+def test_measured_strips_keep_uploading_music_parameters_first(model: str) -> None:
+    """These two ignore a 0x30-series activation whose parameters have not arrived. Losing
+    either flag silently returns them to advertising modes that do nothing."""
+    profile = MODEL_PROFILES[model]
+    carries = [variant for variant in profile.music_variants if variant.template]
+    assert carries, f"{model} no longer declares any music mode that uploads parameters"
+    assert profile.music_upload_before_selector, f"{model} would send the selector before the upload"
+    assert profile.music_requires_upload_ack, f"{model} would not wait for the upload to be acknowledged"
+
+
+@pytest.mark.parametrize("model", sorted(m for m, p in MODEL_PROFILES.items() if p.music_modes))
+def test_every_advertised_music_mode_has_a_way_to_be_applied(model: str) -> None:
+    """A mode in the effect list that cannot produce packets is an entry that cannot work."""
+    from custom_components.ha_govee_led_ble.music_commands import prepare_music_request
+    from custom_components.ha_govee_led_ble.music_semantics import music_parameters_available, music_variant
+
+    profile = MODEL_PROFILES[model]
+    for slug in profile.music_modes:
+        variant = music_variant(profile, MUSIC_MODE_SLUGS[slug])
+        available = variant is not None and music_parameters_available(profile, variant)
+        include = bool(variant and (variant.template or variant.supports_style) and available)
+        packets = prepare_music_request(model, slug, 50, None, False, {}, include_parameters=include, profile=profile)
+        assert packets, f"{model} music mode {slug} produced no packets"
+        if variant is not None and variant.template and available:
+            # Parameters that are available must actually ride along; a mode whose payload is
+            # withheld pending an unknown IC count is a different, declared case.
+            assert len(packets) > 2, f"{model} music mode {slug} carries a template but sends no upload"

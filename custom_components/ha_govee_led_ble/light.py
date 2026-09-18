@@ -83,7 +83,7 @@ from .light_services import (
     _GoveeLightServicesMixin,
 )
 from .music_commands import prepare_music_request
-from .music_semantics import music_variant
+from .music_semantics import music_parameters_available, music_variant
 from .native_profile_controls import _send_video_setting, async_require_video_controls, prepare_video_mode
 from .native_profile_controls import apply_active_video_mode as apply_active_video_mode
 from .native_scenes import build_native_scene_packets
@@ -795,7 +795,16 @@ class GoveeBLELight(_GoveeLightServicesMixin, GoveeBLEEntity, RestoreEntity, Lig
                 else None,
                 coordinator.music_calm if variant and variant.supports_style else False,
                 {},
-                include_parameters=bool(variant and variant.supports_style),
+                # A mode's parameters ride with it whenever the variant carries any, not only
+                # when it also offers a style toggle. The 0x30-series modes on the RGBIC strips
+                # are ignored outright unless their palette and timings are uploaded first --
+                # measured: with the upload the device enters the mode, without it the mode
+                # never changes -- and most of those variants have supports_style False.
+                include_parameters=bool(
+                    variant
+                    and (variant.template or variant.supports_style)
+                    and music_parameters_available(coordinator.profile, variant)
+                ),
                 profile=coordinator.profile,
             )
             return partial(coordinator.async_select_music_slug, selected.value)

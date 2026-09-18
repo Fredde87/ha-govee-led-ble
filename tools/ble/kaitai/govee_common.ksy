@@ -79,5 +79,8 @@ enums:
     # maker labels it R.string.b2light_scenes_ripple; makeYouDong$default defaults to -93
     # (0xa3) and passes R.string.app_move_about. strings.xml renders those "Ripple" and
     # "Orbit". Transcribed, not invented.
+    # AbsNewMusicEffect.music_code_rgbic_liuying = 81, whose label resolves through
+    # effect_liuying_des to "Luminous". Transcribed from the 7.6.21 APK, not invented.
+    0x51: luminous
     0x92: ripple
     0xa3: orbit

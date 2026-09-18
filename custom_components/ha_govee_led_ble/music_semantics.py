@@ -44,6 +44,15 @@ class MusicVariant:
     physical_defaults: str | None = None
 
 
+# The palette every one of these uploads carries, taken from the capture rather than composed.
+_CAPTURED_PALETTE = bytes.fromhex("ff0000ff7f00ffff0000ff000000ff00ffff8b00ff")
+
+
+def _captured_music_body(mode_code: int, fade: int, piece: int, speed: int, off_min: int, off_max: int) -> bytes:
+    """One `a3` music body exactly as the vendor app uploaded it for this device."""
+    return bytes([mode_code, 7]) + _CAPTURED_PALETTE + bytes([fade, piece, speed, off_min, off_max]) + bytes(3)
+
+
 # Captured values, not values calculated from logical colour zones or guessed IC counts.
 H617A_MUSIC_VARIANTS = (
     MusicVariant(0x03, "H617A qualified selector style", supports_style=True),
@@ -156,6 +165,65 @@ H617A_MUSIC_VARIANTS = (
         palette_bounds=(1, 8),
         supports_fixed_colour=False,
     ),
+)
+
+
+# The five further modes both RGBIC strips were measured accepting, each with the body the
+# vendor app uploaded for it -- read out of the capture, not composed. Every one needs its
+# parameters first, exactly like the 0x30-series above; the palette is identical across all of
+# them and the timings are whatever that effect carried on the wire.
+_STRIP_EXTRA_MUSIC_VARIANTS = (
+    MusicVariant(
+        0x51,
+        "H1A42/H61F5 capture 2026-09-06; APK music_code_rgbic_liuying",
+        layout="music_body",
+        template=_captured_music_body(0x51, 0, 0, 0, 0, 0),
+        palette_bounds=(1, 8),
+        supports_fixed_colour=False,
+    ),
+    MusicVariant(
+        0x84,
+        "H1A42/H61F5 capture 2026-09-06; multi_value_sub_water_flower",
+        layout="music_body",
+        template=_captured_music_body(0x84, 0, 0, 0, 0, 0),
+        palette_bounds=(1, 8),
+        supports_fixed_colour=False,
+    ),
+    MusicVariant(
+        0x85,
+        "H1A42/H61F5 capture 2026-09-06; multi_value_sub_spring",
+        layout="music_body",
+        template=_captured_music_body(0x85, 0, 0, 0, 0, 0),
+        palette_bounds=(1, 8),
+        supports_fixed_colour=False,
+    ),
+    MusicVariant(
+        0x92,
+        "H1A42/H61F5 capture 2026-09-06; makeLianYi default, labelled Ripple",
+        layout="music_body",
+        template=_captured_music_body(0x92, 0, 0, 0, 0, 0),
+        palette_bounds=(1, 8),
+        supports_fixed_colour=False,
+    ),
+    MusicVariant(
+        0xA3,
+        "H1A42/H61F5 capture 2026-09-06; makeYouDong default, labelled Orbit",
+        layout="music_body",
+        template=_captured_music_body(0xA3, 0, 0, 0, 0, 0),
+        palette_bounds=(1, 8),
+        supports_fixed_colour=False,
+    ),
+)
+
+# What the two strips declare: the H617A set plus the five above.
+RGBIC_STRIP_MUSIC_VARIANTS = H617A_MUSIC_VARIANTS + _STRIP_EXTRA_MUSIC_VARIANTS
+
+
+# The H66A0 takes thirteen of its sixteen from a bare selector -- measured -- and only these
+# three need their parameters uploaded first. Declaring variants for just those three leaves the
+# other thirteen on the bare path they were verified on.
+H66A0_MUSIC_VARIANTS = tuple(
+    variant for variant in _STRIP_EXTRA_MUSIC_VARIANTS if variant.mode_code in (0x51, 0x92, 0xA3)
 )
 
 

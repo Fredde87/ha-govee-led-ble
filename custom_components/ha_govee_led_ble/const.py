@@ -12,6 +12,7 @@ from .music_semantics import (
     H617E_MUSIC_VARIANTS,
     H6099_MUSIC_VARIANTS,
     H6102_MUSIC_VARIANTS,
+    RGBIC_STRIP_MUSIC_VARIANTS,
     MusicVariant,
 )
 
@@ -324,6 +325,20 @@ MUSIC_MODE_SLUGS: dict[str, int] = {
     "day_and_night": 0x37,
     "bloom": 0x30,
     "shiny": 0x31,
+    # Measured on both strips and named from the vendor's own tables: 0x51 from the APK,
+    # the rest transcribed into govee_common.ksy from strings.xml in an earlier sweep.
+    "luminous": 0x51,
+    "splash": 0x84,
+    "spring": 0x85,
+    "ripple": 0x92,
+    "orbit": 0xA3,
+    # Swept from a device on 2026-08-27 and named in govee_common.ksy at the time; the
+    # registry never carried them, which is why the H66A0 list that references them was
+    # dead code until now.
+    "flowing_light": 0x53,
+    "color_painting": 0x55,
+    "meteor": 0x65,
+    "windmill": 0x78,
 }
 
 # The music modes backed by a `music_variants` entry, which is what the effect selector is
@@ -331,24 +346,6 @@ MUSIC_MODE_SLUGS: dict[str, int] = {
 # govee_common.ksy::music_mode so a frame carrying one can be parsed and built; they are not
 # declared on a profile, because declaring a mode with no variant advertises something the
 # selector cannot reach.
-# The four music effects these strips accept from a bare activation. NOT the four they
-# support: the H1A42 answers sixteen in the app, and its capture shows why -- ids 3..6 are
-# sent bare, while 7, 48, 49, 50, 51, 53, 55, 81, 132, 133, 146 and 163 are each preceded
-# by an `a3 00` parameter upload (palette, fade, piece, speed), acked `a3 41 result=OK`,
-# and only then activated. This integration sends the bare `33 05 13 <id>` alone, so the
-# device ignores every id that needs its parameters first, and the list is trimmed to what
-# it can actually deliver rather than to what the hardware can do. The H66A0 accepts all
-# eleven of its own bare, which is why it keeps the longer list.
-#
-# Worth knowing when measuring this: an ignored write still reads back as applied, because
-# optimistic state shows the requested mode until the next colour-mode reply corrects it.
-# Scored against a forced device read, twice per device, with an 11/11 H66A0 control.
-_CLASSIC_MUSIC_MODES = (
-    "energetic",
-    "rhythm",
-    "spectrum",
-    "rolling",
-)
 _REACHABLE_MUSIC_MODES = (
     "energetic",
     "rhythm",
@@ -361,6 +358,14 @@ _REACHABLE_MUSIC_MODES = (
     "day_and_night",
     "bloom",
     "shiny",
+)
+
+_STRIP_MUSIC_MODES = _REACHABLE_MUSIC_MODES + (
+    "luminous",
+    "splash",
+    "spring",
+    "ripple",
+    "orbit",
 )
 
 
@@ -691,7 +696,27 @@ MODEL_PROFILES: dict[str, ModelProfile] = {
         # `_video_grammar` and only emit for H6099/H6199, so an H617A-grammar device cannot
         # build them at all. The setter stays unclaimed regardless: Controller4WhiteBalance
         # is a calibration register with no clean undo.
-        music_modes=_REACHABLE_MUSIC_MODES,
+        # These eleven are what the device ACCEPTS, measured 11/11 against a forced read, and
+        # they deliberately do not mirror what the vendor app OFFERS. The app computes its list
+        # in pact_tvlightv4/detail/mode/MusicMode: a base four chosen by pact
+        # (`supportPactV1` -> 0,5,6,7 else 5,3,8,9) plus four more only when
+        # `supportNewMusic(fw)` -- firmware >= 1.08.00 -- unlocks 73,80,81,82. On this unit's
+        # 1.00.24 that yields three or four modes, of which only {3,5,6} are ones we measured
+        # working, so porting the computation would drop eight modes that demonstrably apply.
+        #
+        # Worth knowing before anyone tries: in that class the codes are pact-RELATIVE. The same
+        # field is 5 under one pact and 0 under another, so code 5 is ShenDong in one branch and
+        # JieZou in the other -- which is why 81 and 146 each carry two names in the vendor
+        # tables. A code means nothing without its pact; this registry is global and happens to
+        # hold for the devices measured here.
+        # Seventeen, every one from a bare selector: this device needs no parameter upload and
+        # its profile declares no variants. Luminous, ripple and orbit are deliberately absent.
+        # They are refused here both bare and with the strips' upload, and the APK says why:
+        # pact_tvlightv3/ble/SubModeMusicV3.getWriteBytes emits nine bytes for mode 3, eight for
+        # 5/8/9 and a bare three -- `13 <code> <sensitivity>` -- for everything else, with no
+        # a3 upload anywhere in the pact. Bare is the only form this family has, and bare is
+        # what the device refused, so those three are simply not implemented on it.
+        music_modes=_H66A0_MUSIC_MODES,
         supports_music_color=True,
         whole_device_mask=0x7FFF,
         # Fourteen is the uncut length of this backlight, and the default until the device
@@ -743,7 +768,13 @@ MODEL_PROFILES: dict[str, ModelProfile] = {
         supports_custom_effects=True,
         supports_multi_layered_effects=True,
         supports_scenes=True,
-        music_modes=_CLASSIC_MUSIC_MODES,
+        music_modes=_STRIP_MUSIC_MODES,
+        music_variants=RGBIC_STRIP_MUSIC_VARIANTS,
+        # The strip ignores a 0x30-series activation whose palette and timings have not
+        # arrived yet: measured, the mode simply never changes. The app uploads first and
+        # waits for the `a3 41` ack, and so must we.
+        music_upload_before_selector=True,
+        music_requires_upload_ack=True,
         whole_device_mask=0x7FFF,
         # Five segments describes a strip that has been cut, so this is a default rather
         # than a product length: the aa 40 probe answers with the installed length (5 here,
@@ -795,7 +826,13 @@ MODEL_PROFILES: dict[str, ModelProfile] = {
         supports_custom_effects=True,
         supports_multi_layered_effects=True,
         supports_scenes=True,
-        music_modes=_CLASSIC_MUSIC_MODES,
+        music_modes=_STRIP_MUSIC_MODES,
+        music_variants=RGBIC_STRIP_MUSIC_VARIANTS,
+        # The strip ignores a 0x30-series activation whose palette and timings have not
+        # arrived yet: measured, the mode simply never changes. The app uploads first and
+        # waits for the `a3 41` ack, and so must we.
+        music_upload_before_selector=True,
+        music_requires_upload_ack=True,
         supports_music_color=True,
         whole_device_mask=0x7FFF,
         segment_count=5,

@@ -4254,17 +4254,33 @@ def test_h66a0_display_setting_reply_does_not_raise(hass):
 
 
 @pytest.mark.parametrize("model", ["H1A42", "H61F5"])
-def test_five_segment_strips_claim_only_the_low_id_music_modes(model):
-    """These two accept ids 3-6 from a bare activation and ignore the rest, because the
-    rest need an `a3 00` parameter upload first that this integration does not send for
-    music -- their captures show sixteen ids driven that way. The list therefore tracks
-    what can be delivered, not what the hardware supports. The H66A0 accepts all eleven
-    of its own bare."""
-    claimed = set(MODEL_PROFILES[model].music_modes)
-    assert claimed == {"energetic", "rhythm", "spectrum", "rolling"}
-    assert {MUSIC_MODE_SLUGS[slug] for slug in claimed} == {3, 4, 5, 6}
-    assert not claimed & {"bloom", "shiny", "separation", "hopping", "piano_keys", "fountain", "day_and_night"}
-    assert len(MODEL_PROFILES["H66A0"].music_modes) == 11
+def test_five_segment_strips_reach_every_music_mode_they_advertise(model):
+    """These two ignore a 0x30-series activation sent on its own: measured, the mode never
+    changes. With the palette and timings uploaded first they take all eleven, 11/11 on both
+    devices, which is why they declare the variants that carry those payloads."""
+    profile = MODEL_PROFILES[model]
+    assert len(profile.music_modes) == 16
+    assert {MUSIC_MODE_SLUGS[slug] for slug in profile.music_modes} == {
+        3,
+        4,
+        5,
+        6,
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+        55,
+        0x51,
+        0x84,
+        0x85,
+        0x92,
+        0xA3,
+    }
+    assert profile.music_variants, f"{model} advertises 0x30-series modes with no parameters to send"
+    assert profile.music_upload_before_selector and profile.music_requires_upload_ack
+    assert len(MODEL_PROFILES["H66A0"].music_modes) == 17
 
 
 def _ic_probe_frame(segments: int, ic_count: int = 90) -> bytes:
