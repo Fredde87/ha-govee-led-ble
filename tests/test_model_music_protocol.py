@@ -206,3 +206,24 @@ def test_h7020_music_grammar_is_independent_of_basic_command_grammar(monkeypatch
     assert music_slug_for(model, 0x04) == "spectrum"
     assert not music_mode_supports_style(model, 0x03)
     assert not music_mode_has_parameter_write(model, 0x03)
+
+
+def test_every_advertised_mode_resolves_back_from_a_status_reply() -> None:
+    """A mode is selected by one code and reported by one code, so the pair must agree.
+
+    `coordinator_status` turns a reply's mode id back into a slug and raises when the result is
+    not one the profile advertises. Resolving that lookup through a grammar the model only
+    borrows loses the ids the roster has beyond the donor's, and silently renames the ids whose
+    numbering the two tables disagree on.
+    """
+    for model, profile in sorted(MODEL_PROFILES.items()):
+        if not profile.music_modes:
+            continue
+        # The H6125 reports in its own 0x11 submode numbering rather than the logical command
+        # codes, and is answered from that enum before the shared code space is consulted.
+        if profile.status_grammar == "H6125":
+            continue
+        for slug in profile.music_modes:
+            code = music_code_for(model, slug, profile=profile)
+            resolved = music_slug_for(model, code, direction="status", profile=profile)
+            assert resolved == slug, f"{model} selects {slug} with 0x{code:02x} but reports that id as {resolved!r}"

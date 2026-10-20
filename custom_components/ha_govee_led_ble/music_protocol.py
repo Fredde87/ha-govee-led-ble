@@ -154,10 +154,17 @@ def _protocol_model(
     *,
     profile: ModelProfile | None = None,
 ) -> str | None:
+    """Resolve the codebook to read for one direction.
+
+    `music_grammar` names the model's own mode roster, so it selects the codebook in both
+    directions. Letting the status direction fall back to `status_grammar` reads a model's own
+    ids through its donor's table: ids the donor lacks resolve to nothing, and ids the two
+    tables number differently resolve to the wrong mode. A model that renumbers its replies,
+    as the H6125 does, is answered from its own status table before this is reached.
+    """
     profile = get_profile(model) if profile is None else profile
-    grammar = profile.status_grammar
-    if direction == "command":
-        grammar = profile.music_grammar or profile.command_grammar
+    inherited = profile.command_grammar if direction == "command" else profile.status_grammar
+    grammar = profile.music_grammar or inherited
     return grammar if grammar in MUSIC_MODE_CODES_BY_MODEL else None
 
 
