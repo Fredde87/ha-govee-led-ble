@@ -115,3 +115,18 @@ def test_h6076_codebook_is_its_own_numbering_not_the_h617a_one() -> None:
         0x50,
         0x51,
     }
+
+
+def test_no_codebook_claims_a_mode_its_profile_does_not_advertise() -> None:
+    """A codebook is one model's mode roster, so it cannot exceed what that profile claims.
+
+    `MUSIC_MODE_SLUGS` records encoding knowledge for every device in the tree, not one device's
+    support, so a codebook taken from it directly grows whenever a slug is added for some other
+    model -- and the added id is one the widened model's own evidence may have refused.
+    """
+    for model, codebook in MUSIC_MODE_CODES_BY_MODEL.items():
+        profile = MODEL_PROFILES.get(model)
+        if profile is None:
+            continue
+        unclaimed = sorted(set(codebook).difference(profile.music_modes))
+        assert not unclaimed, f"{model}'s codebook names {unclaimed}, which its profile does not advertise"

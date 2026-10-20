@@ -5,7 +5,7 @@ from importlib import import_module
 from types import MappingProxyType
 from typing import Any, Final, cast
 
-from .const import MUSIC_MODE_SLUGS, ModelProfile, get_profile
+from .const import MODEL_PROFILES, MUSIC_MODE_SLUGS, ModelProfile, get_profile
 
 H6179CommandWrite = cast(
     Any,
@@ -26,7 +26,20 @@ H6125StatusReply = cast(
     import_module("custom_components.ha_govee_led_ble.generated_protocol.h6125_status_reply").H6125StatusReply,
 )
 
-_H617A_MODE_CODES: Final[Mapping[str, int]] = MappingProxyType(MUSIC_MODE_SLUGS)
+
+def _advertised_codes(model: str) -> Mapping[str, int]:
+    """The codes for exactly the modes one profile advertises.
+
+    Reading the shared slug table directly makes a model's codebook whatever that table happens
+    to hold, so a slug added for one device widens every codebook built from it -- including to
+    ids the widened model's own evidence refused. Building each codebook from its own profile
+    keeps it inside what that profile claims, and the registry stays the record of encoding
+    knowledge rather than of product support.
+    """
+    return MappingProxyType({slug: MUSIC_MODE_SLUGS[slug] for slug in MODEL_PROFILES[model].music_modes})
+
+
+_H617A_MODE_CODES: Final[Mapping[str, int]] = _advertised_codes("H617A")
 _H6179_MODE_CODES: Final[Mapping[str, int]] = MappingProxyType(
     {mode.name: int(mode) for mode in H6179CommandWrite.MusicEffect}
 )
