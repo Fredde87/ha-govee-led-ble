@@ -513,14 +513,14 @@ def _mode_label(slug: str) -> str:
 
 
 def _native_music_modes(model: str) -> tuple[NativeModeOption, ...]:
-    supported = frozenset(MODEL_PROFILES[model].music_modes)
+    codebook = MUSIC_MODE_CODES_BY_MODEL[model]
     return tuple(
         NativeModeOption(
             slug,
             _mode_label(slug),
         )
-        for slug in MUSIC_MODE_CODES_BY_MODEL[model]
-        if slug in supported
+        for slug in MODEL_PROFILES[model].music_modes
+        if slug in codebook
     )
 
 

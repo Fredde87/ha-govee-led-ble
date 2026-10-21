@@ -5,11 +5,23 @@ from importlib import import_module
 from types import MappingProxyType
 from typing import Any, Final, cast
 
-from .const import MODEL_PROFILES, MUSIC_MODE_SLUGS, ModelProfile, get_profile
+from .const import ModelProfile, get_profile
 
+GoveeCommon = cast(
+    Any,
+    import_module("custom_components.ha_govee_led_ble.generated_protocol.govee_common").GoveeCommon,
+)
+H6099CommandWrite = cast(
+    Any,
+    import_module("custom_components.ha_govee_led_ble.generated_protocol.h6099_command_write").H6099CommandWrite,
+)
 H6179CommandWrite = cast(
     Any,
     import_module("custom_components.ha_govee_led_ble.generated_protocol.h6179_command_write").H6179CommandWrite,
+)
+H6199CommandWrite = cast(
+    Any,
+    import_module("custom_components.ha_govee_led_ble.generated_protocol.h6199_command_write").H6199CommandWrite,
 )
 
 H6076MusicBody = cast(
@@ -21,49 +33,63 @@ H6076MusicWrite = cast(
     import_module("custom_components.ha_govee_led_ble.generated_protocol.h6076_music_write").H6076MusicWrite,
 )
 
+H6125LegacyStatusReply = cast(
+    Any,
+    import_module(
+        "custom_components.ha_govee_led_ble.generated_protocol.h6125_legacy_status_reply"
+    ).H6125LegacyStatusReply,
+)
 H6125StatusReply = cast(
     Any,
     import_module("custom_components.ha_govee_led_ble.generated_protocol.h6125_status_reply").H6125StatusReply,
 )
 
-
-def _advertised_codes(model: str) -> Mapping[str, int]:
-    """The codes for exactly the modes one profile advertises.
-
-    Reading the shared slug table directly makes a model's codebook whatever that table happens
-    to hold, so a slug added for one device widens every codebook built from it -- including to
-    ids the widened model's own evidence refused. Building each codebook from its own profile
-    keeps it inside what that profile claims, and the registry stays the record of encoding
-    knowledge rather than of product support.
-    """
-    return MappingProxyType({slug: MUSIC_MODE_SLUGS[slug] for slug in MODEL_PROFILES[model].music_modes})
-
-
-_H617A_MODE_CODES: Final[Mapping[str, int]] = _advertised_codes("H617A")
+_H617A_MODE_CODES: Final[Mapping[str, int]] = MappingProxyType({mode.name: int(mode) for mode in GoveeCommon.MusicMode})
+_H6099_MODE_CODES: Final[Mapping[str, int]] = MappingProxyType(
+    {mode.name: int(mode) for mode in H6099CommandWrite.MusicMode}
+)
 _H6179_MODE_CODES: Final[Mapping[str, int]] = MappingProxyType(
     {mode.name: int(mode) for mode in H6179CommandWrite.MusicEffect}
 )
 _H6076_MODE_CODES: Final[Mapping[str, int]] = MappingProxyType(
     {mode.name: int(mode) for mode in H6076MusicWrite.MusicMode}
 )
-# Replies use the submode 0x11 numbering; commands keep the shared H617A logical codes.
+# Replies use the submode 0x11 or 0x0c numbering; commands keep the shared H617A logical codes.
 _H6125_STATUS_MODE_SLUGS: Final[Mapping[int, str]] = MappingProxyType(
     {int(mode): mode.name for mode in H6125StatusReply.MusicMode}
 )
+_H6125_LEGACY_STATUS_MODE_SLUGS: Final[Mapping[int, str]] = MappingProxyType(
+    {int(mode): mode.name for mode in H6125LegacyStatusReply.MusicMode}
+)
 _H6199_MODE_CODES: Final[Mapping[str, int]] = MappingProxyType(
-    {
-        "energetic": 0x05,
-        "rhythm": 0x03,
-        "spectrum": 0x04,
-        "rolling": 0x06,
-    }
+    {mode.name: int(mode) for mode in H6199CommandWrite.MusicMode}
+)
+_H617A_STYLE_CODES: Final[frozenset[int]] = frozenset(
+    int(mode)
+    for mode in (
+        GoveeCommon.MusicMode.rhythm,
+        GoveeCommon.MusicMode.bloom,
+        GoveeCommon.MusicMode.shiny,
+    )
+)
+_H617A_PARAMETER_WRITE_CODES: Final[frozenset[int]] = frozenset(
+    int(mode)
+    for mode in (
+        GoveeCommon.MusicMode.bloom,
+        GoveeCommon.MusicMode.shiny,
+        GoveeCommon.MusicMode.separation,
+        GoveeCommon.MusicMode.hopping,
+        GoveeCommon.MusicMode.piano_keys,
+        GoveeCommon.MusicMode.fountain,
+        GoveeCommon.MusicMode.day_and_night,
+    )
 )
 
 MUSIC_MODE_CODES_BY_MODEL: Final[Mapping[str, Mapping[str, int]]] = MappingProxyType(
     {
         "H617A": _H617A_MODE_CODES,
         "H617E": _H617A_MODE_CODES,
-        "H6099": _H617A_MODE_CODES,
+        "H6099": _H6099_MODE_CODES,
         "H6102": _H617A_MODE_CODES,
         "H6125": _H617A_MODE_CODES,
         "H6076": _H6076_MODE_CODES,
@@ -78,25 +104,33 @@ _MUSIC_MODE_SLUGS_BY_MODEL: Final[Mapping[str, Mapping[int, str]]] = MappingProx
         for model, codes in MUSIC_MODE_CODES_BY_MODEL.items()
     }
 )
+_STATUS_MODE_SLUGS_BY_GRAMMAR: Final[Mapping[str, Mapping[int, str]]] = MappingProxyType(
+    {
+        "H6125": _H6125_STATUS_MODE_SLUGS,
+        "H6125-intermediate": _H6125_STATUS_MODE_SLUGS,
+        "H6125-legacy": _H6125_LEGACY_STATUS_MODE_SLUGS,
+        "H6125-modern": _MUSIC_MODE_SLUGS_BY_MODEL["H617A"],
+    }
+)
 _MUSIC_STYLE_CODES_BY_MODEL: Final[Mapping[str, frozenset[int]]] = MappingProxyType(
     {
-        "H617A": frozenset({0x03, 0x30, 0x31}),
-        "H617E": frozenset({0x03, 0x30, 0x31}),
-        "H6099": frozenset({0x03, 0x30, 0x31}),
-        "H6102": frozenset({0x03, 0x30, 0x31}),
-        "H6125": frozenset({0x03, 0x30, 0x31}),
+        "H617A": _H617A_STYLE_CODES,
+        "H617E": _H617A_STYLE_CODES,
+        "H6099": _H617A_STYLE_CODES,
+        "H6102": _H617A_STYLE_CODES,
+        "H6125": _H617A_STYLE_CODES,
         "H6076": frozenset({int(H6076MusicWrite.MusicMode.rhythm)}),
         "H6179": frozenset(),
-        "H6199": frozenset({0x03}),
+        "H6199": frozenset({int(H6199CommandWrite.MusicMode.rhythm)}),
     }
 )
 _MUSIC_PARAMETER_WRITE_CODES_BY_MODEL: Final[Mapping[str, frozenset[int]]] = MappingProxyType(
     {
-        "H617A": frozenset({0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x37}),
-        "H617E": frozenset({0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x37}),
-        "H6099": frozenset({0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x37}),
-        "H6102": frozenset({0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x37}),
-        "H6125": frozenset({0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x37}),
+        "H617A": _H617A_PARAMETER_WRITE_CODES,
+        "H617E": _H617A_PARAMETER_WRITE_CODES,
+        "H6099": _H617A_PARAMETER_WRITE_CODES,
+        "H6102": _H617A_PARAMETER_WRITE_CODES,
+        "H6125": _H617A_PARAMETER_WRITE_CODES,
         "H6076": frozenset(int(mode) for mode in H6076MusicBody.MusicMode),
         "H6179": frozenset(),
         "H6199": frozenset(),
@@ -128,10 +162,13 @@ def music_codebook(profile: ModelProfile) -> Mapping[str, int]:
 
 def music_code_for(model: str, slug: str, *, profile: ModelProfile | None = None) -> int:
     """Return the raw mode code used by a model."""
+    profile = get_profile(model) if profile is None else profile
     protocol_model = _protocol_model(model, profile=profile)
     codebook = MUSIC_MODE_CODES_BY_MODEL.get(protocol_model) if protocol_model is not None else None
     if codebook is None:
         raise ValueError(f"{model} has no music mode codebook")
+    if slug not in profile.music_modes:
+        raise ValueError(f"{model} does not support music mode {slug!r}")
     try:
         return codebook[slug]
     except KeyError:
@@ -147,8 +184,8 @@ def music_slug_for(
 ) -> str | None:
     """Return the model-specific slug for a raw mode code."""
     profile = get_profile(model) if profile is None else profile
-    if direction == "status" and profile.status_grammar == "H6125":
-        return _H6125_STATUS_MODE_SLUGS.get(code)
+    if direction == "status" and (status_codes := _STATUS_MODE_SLUGS_BY_GRAMMAR.get(profile.status_grammar or "")):
+        return status_codes.get(code)
     protocol_model = _protocol_model(model, direction, profile=profile)
     codebook = _MUSIC_MODE_SLUGS_BY_MODEL.get(protocol_model) if protocol_model is not None else None
     return codebook.get(code) if codebook is not None else None

@@ -32,7 +32,8 @@ from custom_components.ha_govee_led_ble.const import (
 from custom_components.ha_govee_led_ble.coordinator import GoveeBLECoordinator
 from custom_components.ha_govee_led_ble.effect_compiler import CompatibilityState, compatibility, compile_music_profile
 from custom_components.ha_govee_led_ble.effect_domain import LibraryItem, MusicProfile
-from custom_components.ha_govee_led_ble.effect_selector import MUSIC_EFFECTS, effect_selector_entries
+from custom_components.ha_govee_led_ble.effect_selector import effect_selector_entries
+from custom_components.ha_govee_led_ble.music_protocol import music_code_for, music_slug_for
 
 
 def test_segment_count_and_supports_segments():
@@ -417,7 +418,6 @@ async def test_new_encoding_metadata_does_not_enable_music_before_profile_constr
     monkeypatch.setitem(sys.modules, namespace.__name__, namespace)
     exec(compile(ast.fix_missing_locations(tree), const.__file__, "exec"), namespace.__dict__)  # noqa: S102
     monkeypatch.setitem(const.MUSIC_MODE_SLUGS, "future_mode", 5)
-    monkeypatch.setitem(MUSIC_EFFECTS, "Music: Future Mode", "future_mode")
 
     for model in ("H617A", "H617E", "H6199"):
         profile = namespace.MODEL_PROFILES[model]
@@ -425,6 +425,9 @@ async def test_new_encoding_metadata_does_not_enable_music_before_profile_constr
         assert "future_mode" not in profile.music_modes
         monkeypatch.setitem(MODEL_PROFILES, model, profile)
         assert "future_mode" not in {mode.id for mode in effect_catalogue._native_music_modes(model)}
+        with pytest.raises(ValueError, match="does not support music mode"):
+            music_code_for(model, "future_mode", profile=profile)
+        assert music_slug_for(model, 5, profile=profile) == "energetic"
         entries = effect_selector_entries(
             model, frozenset({const.EFFECT_CATEGORY_REACTIVE}), (), prefix_effect_names=False
         )

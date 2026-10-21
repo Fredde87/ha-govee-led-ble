@@ -2,10 +2,18 @@
 
 import pytest
 
-from custom_components.ha_govee_led_ble.const import MODEL_PROFILES
+from custom_components.ha_govee_led_ble.const import MODEL_PROFILES, device_profile
 from custom_components.ha_govee_led_ble.music_protocol import (
     MUSIC_MODE_CODES_BY_MODEL,
+    GoveeCommon,
+    H6076MusicWrite,
+    H6099CommandWrite,
+    H6125LegacyStatusReply,
+    H6125StatusReply,
+    H6179CommandWrite,
+    H6199CommandWrite,
     music_code_for,
+    music_codebook,
     music_mode_has_parameter_write,
     music_mode_supports_style,
     music_slug_for,
@@ -117,16 +125,55 @@ def test_h6076_codebook_is_its_own_numbering_not_the_h617a_one() -> None:
     }
 
 
-def test_no_codebook_claims_a_mode_its_profile_does_not_advertise() -> None:
-    """A codebook is one model's mode roster, so it cannot exceed what that profile claims.
+def test_codebooks_match_generated_kaitai_enums_and_gate_on_effective_profile() -> None:
+    expected_enums = {
+        "H617A": GoveeCommon.MusicMode,
+        "H617E": GoveeCommon.MusicMode,
+        "H6099": H6099CommandWrite.MusicMode,
+        "H6102": GoveeCommon.MusicMode,
+        "H6125": GoveeCommon.MusicMode,
+        "H6076": H6076MusicWrite.MusicMode,
+        "H6179": H6179CommandWrite.MusicEffect,
+        "H6199": H6199CommandWrite.MusicMode,
+    }
+    for model, enum_type in expected_enums.items():
+        assert MUSIC_MODE_CODES_BY_MODEL[model] == {mode.name: int(mode) for mode in enum_type}
 
-    `MUSIC_MODE_SLUGS` records encoding knowledge for every device in the tree, not one device's
-    support, so a codebook taken from it directly grows whenever a slug is added for some other
-    model -- and the added id is one the widened model's own evidence may have refused.
-    """
-    for model, codebook in MUSIC_MODE_CODES_BY_MODEL.items():
-        profile = MODEL_PROFILES.get(model)
-        if profile is None:
+    effective_profiles = [
+        *((model, profile) for model, profile in MODEL_PROFILES.items()),
+        ("H6076", device_profile("H6076", None, None)),
+        ("H6102", device_profile("H6102", None, None)),
+        ("H6102", device_profile("H6102", 10, 1)),
+        ("H6125", device_profile("H6125", None, None)),
+        ("H6125", device_profile("H6125", 1, 1, firmware="1.00.11", hardware="1.00.01")),
+        ("H6125", device_profile("H6125", 1, 1, firmware="1.04.08", hardware="1.00.04")),
+        ("H6125", device_profile("H6125", 1, 2, firmware="1.06.00", hardware="1.00.03")),
+        ("H6125", device_profile("H6125", 1, 2, firmware="1.07.00", hardware="1.00.03")),
+        ("H6125", device_profile("H6125", 10, 1, firmware="2.03.99", hardware="2.01.01")),
+        ("H6125", device_profile("H6125", 10, 2, firmware="3.04.37", hardware="3.01.10")),
+        ("H6199", device_profile("H6199", 1, 1)),
+    ]
+    status_enums = {
+        "H6125": {mode.name: int(mode) for mode in H6125StatusReply.MusicMode},
+        "H6125-intermediate": {mode.name: int(mode) for mode in H6125StatusReply.MusicMode},
+        "H6125-legacy": {mode.name: int(mode) for mode in H6125LegacyStatusReply.MusicMode},
+        "H6125-modern": MUSIC_MODE_CODES_BY_MODEL["H617A"],
+    }
+    for model, profile in effective_profiles:
+        grammar = profile.music_grammar or profile.command_grammar
+        if grammar not in MUSIC_MODE_CODES_BY_MODEL:
             continue
-        unclaimed = sorted(set(codebook).difference(profile.music_modes))
-        assert not unclaimed, f"{model}'s codebook names {unclaimed}, which its profile does not advertise"
+        codebook = music_codebook(profile)
+        status_codes = status_enums.get(
+            profile.status_grammar or "",
+            MUSIC_MODE_CODES_BY_MODEL.get(profile.status_grammar or "", {}),
+        )
+        for slug, code in codebook.items():
+            assert music_slug_for(model, code, profile=profile) == slug
+            if slug in profile.music_modes:
+                assert music_code_for(model, slug, profile=profile) == code
+            else:
+                with pytest.raises(ValueError, match="does not support music mode"):
+                    music_code_for(model, slug, profile=profile)
+        for slug, status_code in status_codes.items():
+            assert music_slug_for(model, status_code, direction="status", profile=profile) == slug

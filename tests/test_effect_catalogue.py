@@ -158,14 +158,13 @@ def test_h617e_model_catalogue_reuses_h617a_effects_with_h617e_profiles() -> Non
 
 def test_native_music_modes_are_derived_from_profiles_and_slug_catalogue() -> None:
     def expected_modes(model: str) -> list[dict[str, str]]:
-        supported = frozenset(MODEL_PROFILES[model].music_modes)
         return [
             {
                 "id": slug,
                 "label": slug.replace("_", " ").title(),
             }
-            for slug in MUSIC_MODE_SLUGS
-            if slug in supported
+            for slug in MODEL_PROFILES[model].music_modes
+            if slug in MUSIC_MODE_SLUGS
         ]
 
     assert [mode.to_dict() for mode in H617A_NATIVE_MUSIC_MODES] == expected_modes("H617A")
