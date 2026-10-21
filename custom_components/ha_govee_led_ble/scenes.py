@@ -236,8 +236,19 @@ _MODEL_SCENE_KEYS_BY_CODE = {
 }
 
 
-def scene_key_for_code(model: str, code: int) -> str | None:
-    return _MODEL_SCENE_KEYS_BY_CODE.get(model, {}).get(code)
+def scene_key_for_code(
+    model: str,
+    code: int,
+    *,
+    profile: ModelProfile | None = None,
+) -> str | None:
+    profile = MODEL_PROFILES.get(model) if profile is None else profile
+    if profile is None or profile.scene_catalogue_sku is None:
+        return None
+    for key, scene in MODEL_SCENES.get(profile.scene_catalogue_sku, {}).items():
+        if scene_supported(scene, profile) and scene_selector_code(model, scene, profile=profile) == code:
+            return key
+    return None
 
 
 # H617A protocol and service lookups use the legacy unhyphenated variant names.

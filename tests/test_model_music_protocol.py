@@ -6,15 +6,17 @@ import pytest
 
 from custom_components.ha_govee_led_ble.const import MODEL_PROFILES, device_profile
 from custom_components.ha_govee_led_ble.music_protocol import (
+    _MUSIC_PARAMETER_WRITE_CODES_BY_MODEL,
     MUSIC_MODE_CODES_BY_MODEL,
     GoveeCommon,
+    H6076MusicBody,
     H6076MusicWrite,
     H6099CommandWrite,
-    H6125LegacyStatusReply,
-    H6125StatusReply,
+    H6099MusicParameters,
     H6179CommandWrite,
     H6199CommandWrite,
     H7020CommandWrite,
+    MusicBody,
     music_code_for,
     music_codebook,
     music_mode_has_parameter_write,
@@ -39,7 +41,8 @@ _H617A_CODES = {
 
 def test_model_music_codebooks_preserve_existing_models_and_add_h6179() -> None:
     assert MUSIC_MODE_CODES_BY_MODEL["H617A"] == _H617A_CODES
-    assert MUSIC_MODE_CODES_BY_MODEL["H617E"] == _H617A_CODES
+    assert music_codebook(MODEL_PROFILES["H617E"]) == _H617A_CODES
+    assert MUSIC_MODE_CODES_BY_MODEL["H6099"] == _H617A_CODES
     assert MUSIC_MODE_CODES_BY_MODEL["H6179"] == {"mode_0": 0x00, "mode_1": 0x01}
     assert MUSIC_MODE_CODES_BY_MODEL["H6199"] == {
         "energetic": 0x05,
@@ -139,17 +142,23 @@ def test_h6076_codebook_is_its_own_numbering_not_the_h617a_one() -> None:
 def test_codebooks_match_generated_kaitai_enums_and_gate_on_effective_profile() -> None:
     expected_enums = {
         "H617A": GoveeCommon.MusicMode,
-        "H617E": GoveeCommon.MusicMode,
         "H6099": H6099CommandWrite.MusicMode,
-        "H6102": GoveeCommon.MusicMode,
-        "H6125": GoveeCommon.MusicMode,
         "H6076": H6076MusicWrite.MusicMode,
         "H6179": H6179CommandWrite.MusicEffect,
         "H6199": H6199CommandWrite.MusicMode,
         "H7020": H7020CommandWrite.MusicMode,
     }
-    for model, enum_type in expected_enums.items():
-        assert MUSIC_MODE_CODES_BY_MODEL[model] == {mode.name: int(mode) for mode in enum_type}
+    assert set(MUSIC_MODE_CODES_BY_MODEL) == set(expected_enums)
+    for grammar, enum_type in expected_enums.items():
+        assert MUSIC_MODE_CODES_BY_MODEL[grammar] == {mode.name: int(mode) for mode in enum_type}
+
+    expected_parameter_enums = {
+        "H617A": MusicBody.MusicMode,
+        "H6099": H6099MusicParameters.MusicMode,
+        "H6076": H6076MusicBody.MusicMode,
+    }
+    for grammar, enum_type in expected_parameter_enums.items():
+        assert _MUSIC_PARAMETER_WRITE_CODES_BY_MODEL[grammar] == {int(mode) for mode in enum_type}
 
     effective_profiles = [
         *((model, profile) for model, profile in MODEL_PROFILES.items()),
@@ -166,21 +175,11 @@ def test_codebooks_match_generated_kaitai_enums_and_gate_on_effective_profile() 
         ("H6199", device_profile("H6199", 1, 1)),
         ("H7020", device_profile("H7020", None, None)),
     ]
-    status_enums = {
-        "H6125": {mode.name: int(mode) for mode in H6125StatusReply.MusicMode},
-        "H6125-intermediate": {mode.name: int(mode) for mode in H6125StatusReply.MusicMode},
-        "H6125-legacy": {mode.name: int(mode) for mode in H6125LegacyStatusReply.MusicMode},
-        "H6125-modern": MUSIC_MODE_CODES_BY_MODEL["H617A"],
-    }
     for model, profile in effective_profiles:
-        grammar = profile.music_grammar or profile.command_grammar
-        if grammar not in MUSIC_MODE_CODES_BY_MODEL:
+        selected_grammar = profile.music_grammar or profile.command_grammar
+        if selected_grammar not in MUSIC_MODE_CODES_BY_MODEL:
             continue
         codebook = music_codebook(profile)
-        status_codes = status_enums.get(
-            profile.status_grammar or "",
-            MUSIC_MODE_CODES_BY_MODEL.get(profile.status_grammar or "", {}),
-        )
         for slug, code in codebook.items():
             assert music_slug_for(model, code, profile=profile) == slug
             if slug in profile.music_modes:
@@ -188,8 +187,6 @@ def test_codebooks_match_generated_kaitai_enums_and_gate_on_effective_profile() 
             else:
                 with pytest.raises(ValueError, match="does not support music mode"):
                     music_code_for(model, slug, profile=profile)
-        for slug, status_code in status_codes.items():
-            assert music_slug_for(model, status_code, direction="status", profile=profile) == slug
 
 
 def test_h7020_music_grammar_is_independent_of_basic_command_grammar(monkeypatch) -> None:
@@ -206,24 +203,3 @@ def test_h7020_music_grammar_is_independent_of_basic_command_grammar(monkeypatch
     assert music_slug_for(model, 0x04) == "spectrum"
     assert not music_mode_supports_style(model, 0x03)
     assert not music_mode_has_parameter_write(model, 0x03)
-
-
-def test_every_advertised_mode_resolves_back_from_a_status_reply() -> None:
-    """A mode is selected by one code and reported by one code, so the pair must agree.
-
-    `coordinator_status` turns a reply's mode id back into a slug and raises when the result is
-    not one the profile advertises. Resolving that lookup through a grammar the model only
-    borrows loses the ids the roster has beyond the donor's, and silently renames the ids whose
-    numbering the two tables disagree on.
-    """
-    for model, profile in sorted(MODEL_PROFILES.items()):
-        if not profile.music_modes:
-            continue
-        # The H6125 reports in its own 0x11 submode numbering rather than the logical command
-        # codes, and is answered from that enum before the shared code space is consulted.
-        if profile.status_grammar == "H6125":
-            continue
-        for slug in profile.music_modes:
-            code = music_code_for(model, slug, profile=profile)
-            resolved = music_slug_for(model, code, direction="status", profile=profile)
-            assert resolved == slug, f"{model} selects {slug} with 0x{code:02x} but reports that id as {resolved!r}"

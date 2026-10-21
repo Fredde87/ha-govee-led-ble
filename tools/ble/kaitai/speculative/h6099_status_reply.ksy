@@ -91,6 +91,18 @@ enums:
   video_region:
     0x08: part
     0x09: all
+  music_mode:
+    0x03: rhythm
+    0x04: spectrum
+    0x05: energetic
+    0x06: rolling
+    0x30: bloom
+    0x31: shiny
+    0x32: separation
+    0x33: hopping
+    0x34: piano_keys
+    0x35: fountain
+    0x37: day_and_night
 types:
   installation_direction_body:
     seq:
@@ -198,6 +210,7 @@ types:
     seq:
       - id: mode
         type: u1
+        enum: music_mode
       - id: sensitivity
         type: u1
       - id: is_calm
@@ -213,7 +226,9 @@ types:
         size-eos: true
     instances:
       is_legacy:
-        value: mode == 3 or mode == 4 or mode == 5 or mode == 6
+        value: >-
+          mode == music_mode::rhythm or mode == music_mode::spectrum or
+          mode == music_mode::energetic or mode == music_mode::rolling
   video_state:
     seq:
       - id: source

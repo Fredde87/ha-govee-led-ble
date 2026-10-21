@@ -74,6 +74,11 @@ enums:
   video_region:
     0x00: part
     0x01: all
+  music_mode:
+    0x03: rhythm
+    0x04: spectrum
+    0x05: energetic
+    0x06: rolling
 types:
   display_setting_body:
     seq:
@@ -176,6 +181,7 @@ types:
     seq:
       - id: mode
         type: u1
+        enum: music_mode
       - id: sensitivity
         type: u1
       - id: is_calm

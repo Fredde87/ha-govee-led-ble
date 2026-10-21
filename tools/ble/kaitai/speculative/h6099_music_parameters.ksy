@@ -19,6 +19,7 @@ doc: |
 seq:
   - id: mode
     type: u1
+    enum: music_mode
   - id: num_palette
     type: u1
   - id: palette
@@ -29,13 +30,22 @@ seq:
     type:
       switch-on: mode
       cases:
-        0x30: bloom_tail
-        0x31: shiny_tail
-        0x32: separation_tail
-        0x33: hopping_tail
-        0x34: piano_tail
-        0x35: fountain_tail
-        0x37: daynight_tail
+        'music_mode::bloom': bloom_tail
+        'music_mode::shiny': shiny_tail
+        'music_mode::separation': separation_tail
+        'music_mode::hopping': hopping_tail
+        'music_mode::piano_keys': piano_tail
+        'music_mode::fountain': fountain_tail
+        'music_mode::day_and_night': daynight_tail
+enums:
+  music_mode:
+    0x30: bloom
+    0x31: shiny
+    0x32: separation
+    0x33: hopping
+    0x34: piano_keys
+    0x35: fountain
+    0x37: day_and_night
 types:
   bloom_tail:
     seq:

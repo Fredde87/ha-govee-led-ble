@@ -11,12 +11,7 @@ from .generated_protocol_adapter import (
     video_parameters_from_detail,
 )
 from .light_commands import parse_static_write
-from .music_protocol import music_slug_for
-from .scenes import MODEL_SCENES, scene_key_for_code
-
-_SCENE_EFFECT_BY_MODEL_ID = {
-    model: {scene.code: name for name, scene in scenes.items()} for model, scenes in MODEL_SCENES.items()
-}
+from .scenes import scene_key_for_code
 
 
 def expectations_from_packet(
@@ -29,7 +24,7 @@ def expectations_from_packet(
     """Map an outgoing command to the optimistic fields its replies should confirm."""
     profile = profile or get_profile(model)
     if profile.command_grammar == "H6179":
-        return _h6179_expectations(packet, model, static_echoes_color=static_echoes_color)
+        return _h6179_expectations(packet, model, static_echoes_color=static_echoes_color, profile=profile)
     video = parse_video_command(packet, model, profile=profile)
     if video is not None:
         detail = video.detail
@@ -68,7 +63,7 @@ def expectations_from_packet(
         mode = getattr(generated.body.sub_mode, "name", None)
         detail = generated.body.detail
         if mode == "music":
-            music_mode = music_slug_for(model, int(detail.mode), profile=profile)
+            music_mode = getattr(detail.mode, "name", None)
             expectations["music_mode"] = music_mode
             expectations["music_sensitivity"] = int(detail.sensitivity)
             if not getattr(detail, "is_legacy", True):
@@ -96,14 +91,14 @@ def expectations_from_packet(
         if mode == "scene":
             scene_code = int(detail.scene_id)
             expectations["scene_code"] = scene_code
-            expectations["effect"] = _SCENE_EFFECT_BY_MODEL_ID.get(model, {}).get(scene_code)
+            expectations["effect"] = scene_key_for_code(model, scene_code, profile=profile)
             expectations["unknown_scene_code"] = scene_code if expectations["effect"] is None else None
             return expectations
     elif operation == "multi":
         mode = getattr(generated.body.sub, "name", None)
         detail = generated.body.sub_body
         if mode == "music":
-            music_mode = music_slug_for(model, int(detail.mode_id), profile=profile)
+            music_mode = getattr(detail.mode_id, "name", None)
             expectations["music_mode"] = music_mode
             expectations["music_sensitivity"] = int(detail.sensitivity)
             if not getattr(detail, "is_legacy", True):
@@ -117,7 +112,7 @@ def expectations_from_packet(
         if mode == "scene":
             scene_code = int(detail.code)
             expectations["scene_code"] = scene_code
-            expectations["effect"] = _SCENE_EFFECT_BY_MODEL_ID.get(model, {}).get(scene_code)
+            expectations["effect"] = scene_key_for_code(model, scene_code, profile=profile)
             expectations["unknown_scene_code"] = scene_code if expectations["effect"] is None else None
             return expectations
     if (static := parse_static_write(packet, model, profile=profile)) and static.whole_strip:
@@ -137,6 +132,7 @@ def _h6179_expectations(
     model: str,
     *,
     static_echoes_color: bool,
+    profile: ModelProfile,
 ) -> dict[str, Any]:
     command = parse_h6179_command(packet)
     if command is None:
@@ -155,9 +151,10 @@ def _h6179_expectations(
         }
     if mode == "scene":
         scene_code = int(command.values["scene_code"])
-        effect = scene_key_for_code(model, scene_code)
+        effect = scene_key_for_code(model, scene_code, profile=profile)
         return {
             "color_mode": (ParsedMode.SCENE, None),
+            "scene_code": scene_code,
             "effect": effect,
             "unknown_scene_code": scene_code if effect is None else None,
         }

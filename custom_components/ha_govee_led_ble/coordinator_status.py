@@ -14,13 +14,7 @@ from .generated_protocol_adapter import (
     parse_status_result,
     video_parameters_from_detail,
 )
-from .music_protocol import music_slug_for
-from .scenes import MODEL_SCENES, scene_key_for_code
-
-_SCENE_EFFECT_BY_MODEL_ID = {
-    model: {scene.code: name for name, scene in scenes.items()} for model, scenes in MODEL_SCENES.items()
-}
-
+from .scenes import scene_key_for_code
 
 StatusDomain = ReadDomain
 
@@ -155,12 +149,15 @@ def parse_color_mode(generated: Any, model: str, *, profile: ModelProfile | None
             scene_code = int(values["scene_code"])
             return ParsedColorModeResponse(
                 mode=ParsedMode.SCENE,
-                effect=scene_key_for_code(model, scene_code),
+                effect=scene_key_for_code(model, scene_code, profile=profile),
                 scene_code=scene_code,
             )
         if mode_name == "diy":
             return ParsedColorModeResponse(mode=ParsedMode.DIY, diy_code=int(values["diy_code"]))
         if mode_name == "music":
+            music_mode = values["music_mode"]
+            if music_mode not in profile.music_modes:
+                raise ValueError("music selector is unsupported for model")
             colour = values["colour"]
             music_color = None
             if colour is not None:
@@ -168,12 +165,7 @@ def parse_color_mode(generated: Any, model: str, *, profile: ModelProfile | None
                 music_color = (int(red), int(green), int(blue))
             return ParsedColorModeResponse(
                 mode=ParsedMode.MUSIC,
-                music_mode=music_slug_for(
-                    model,
-                    int(values["music_mode_id"]),
-                    direction="status",
-                    profile=profile,
-                ),
+                music_mode=music_mode,
                 music_sensitivity=int(values["sensitivity"]),
                 music_color=music_color,
             )
@@ -203,9 +195,7 @@ def parse_color_mode(generated: Any, model: str, *, profile: ModelProfile | None
     if mode_name == "music":
         detail = getattr(body, "detail", getattr(body, "mode_body", None))
         mode_id = getattr(detail, "mode", getattr(detail, "mode_id", -1))
-        music_mode = getattr(mode_id, "name", None) or music_slug_for(
-            model, int(mode_id), direction="status", profile=profile
-        )
+        music_mode = getattr(mode_id, "name", None)
         if music_mode not in profile.music_modes:
             raise ValueError("music selector is unsupported for model")
     if mode_name in {"static", "static_colour"}:
@@ -276,7 +266,7 @@ def parse_color_mode(generated: Any, model: str, *, profile: ModelProfile | None
             scene_code = int(body.detail.scene_id)
             return ParsedColorModeResponse(
                 mode=ParsedMode.SCENE,
-                effect=_SCENE_EFFECT_BY_MODEL_ID.get(profile.scene_catalogue_sku or model, {}).get(scene_code),
+                effect=scene_key_for_code(model, scene_code, profile=profile),
                 scene_code=scene_code,
             )
         if mode_name == "diy":
@@ -287,7 +277,7 @@ def parse_color_mode(generated: Any, model: str, *, profile: ModelProfile | None
         scene_code = int(body.mode_body.scene_id)
         return ParsedColorModeResponse(
             mode=ParsedMode.SCENE,
-            effect=_SCENE_EFFECT_BY_MODEL_ID.get(profile.scene_catalogue_sku or model, {}).get(scene_code),
+            effect=scene_key_for_code(model, scene_code, profile=profile),
             scene_code=scene_code,
         )
     if mode_name == "diy":

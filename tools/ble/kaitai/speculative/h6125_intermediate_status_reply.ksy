@@ -125,6 +125,13 @@ types:
           switch-on: mode
           cases:
             'color_mode::static': h6125_legacy_status_reply::cm_static
-            'color_mode::scene': h6125_status_reply::cm_scene
+            'color_mode::scene': cm_scene
             'color_mode::diy': h6125_status_reply::cm_diy
             'color_mode::music': h6125_status_reply::cm_music
+  cm_scene:
+    seq:
+      - id: scene_id
+        type: u2le
+        enum: scene_mode
+      - id: unknown_tail
+        size-eos: true

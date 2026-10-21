@@ -21,7 +21,7 @@ seq:
     contents: [0x41]
   - id: mode
     type: u1
-    enum: govee_common::music_mode
+    enum: music_mode
   - id: num_palette
     type: u1
   - id: palette
@@ -33,26 +33,35 @@ seq:
     type:
       switch-on: mode
       cases:
-        'govee_common::music_mode::bloom': h617a_control_payload::bloom_tail
-        'govee_common::music_mode::shiny': h617a_control_payload::shiny_tail
-        'govee_common::music_mode::separation': h617a_control_payload::separation_tail
-        'govee_common::music_mode::hopping': h617a_control_payload::hopping_tail
-        'govee_common::music_mode::piano_keys': h617a_control_payload::piano_keys_tail
-        'govee_common::music_mode::fountain': h617a_control_payload::fountain_tail
-        'govee_common::music_mode::day_and_night': h617a_control_payload::day_and_night_tail
+        'music_mode::bloom': h617a_control_payload::bloom_tail
+        'music_mode::shiny': h617a_control_payload::shiny_tail
+        'music_mode::separation': h617a_control_payload::separation_tail
+        'music_mode::hopping': h617a_control_payload::hopping_tail
+        'music_mode::piano_keys': h617a_control_payload::piano_keys_tail
+        'music_mode::fountain': h617a_control_payload::fountain_tail
+        'music_mode::day_and_night': h617a_control_payload::day_and_night_tail
   - id: padding
     type: u1
     valid: 0
     repeat: eos
+enums:
+  music_mode:
+    0x30: bloom
+    0x31: shiny
+    0x32: separation
+    0x33: hopping
+    0x34: piano_keys
+    0x35: fountain
+    0x37: day_and_night
 instances:
   tail_len:
     value: >-
-      mode == govee_common::music_mode::hopping ? 9 :
-      mode == govee_common::music_mode::piano_keys ? 5 :
-      mode == govee_common::music_mode::fountain ? 4 :
-      mode == govee_common::music_mode::separation ? 3 :
-      mode == govee_common::music_mode::shiny ? 3 :
-      mode == govee_common::music_mode::day_and_night ? 3 : 2
+      mode == music_mode::hopping ? 9 :
+      mode == music_mode::piano_keys ? 5 :
+      mode == music_mode::fountain ? 4 :
+      mode == music_mode::separation ? 3 :
+      mode == music_mode::shiny ? 3 :
+      mode == music_mode::day_and_night ? 3 : 2
 types:
   mode_set_frame:
     seq:

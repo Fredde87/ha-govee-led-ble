@@ -37,7 +37,7 @@ from .generated_protocol.diy_type03 import DiyType03  # type: ignore[attr-define
 from .generated_protocol_adapter import music_default_palette
 from .layered_scene_decoder import decode_workshop_effect
 from .music_commands import music_default_available
-from .music_protocol import MUSIC_MODE_CODES_BY_MODEL, music_code_for
+from .music_protocol import music_code_for, music_codebook
 from .music_semantics import music_parameters_available, music_params_for_mode, music_variant
 
 EFFECT_STUDIO_CATALOGUE_SCHEMA_VERSION: Final = 11
@@ -643,7 +643,7 @@ def _mode_label(slug: str) -> str:
 
 
 def _native_music_modes(model: str) -> tuple[NativeModeOption, ...]:
-    codebook = MUSIC_MODE_CODES_BY_MODEL[model]
+    codebook = music_codebook(MODEL_PROFILES[model])
     return tuple(
         NativeModeOption(
             slug,

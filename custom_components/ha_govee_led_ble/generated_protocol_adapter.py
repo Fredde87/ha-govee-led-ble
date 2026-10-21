@@ -541,9 +541,11 @@ def _h6179_mode_values(body: Any, *, command: bool) -> Mapping[str, Any] | None:
     if mode == "diy":
         return _values(mode=mode, raw_mode=int(body.mode), diy_code=int(detail.diy_id))
     if mode == "music":
-        mode_id = int(detail.effect_id if command else detail.music_id)
+        mode_field = detail.effect_id if command else detail.music_id
+        music_mode = getattr(mode_field, "name", None)
+        mode_id = int(mode_field)
         if (
-            music_slug_for("H6179", mode_id) is None
+            music_mode is None
             or not profile.music_sensitivity_min <= int(detail.sensitivity) <= profile.music_sensitivity_max
             or detail.colour_mode not in {0, 1}
         ):
@@ -558,7 +560,7 @@ def _h6179_mode_values(body: Any, *, command: bool) -> Mapping[str, Any] | None:
         return _values(
             mode=mode,
             raw_mode=int(body.mode),
-            music_mode=music_slug_for("H6179", mode_id),
+            music_mode=music_mode,
             music_mode_id=mode_id,
             sensitivity=int(detail.sensitivity),
             colour=colour,
@@ -2479,22 +2481,23 @@ def _encode_h6099_music_parameters(
             setattr(tail, spec.wire_field, int(value))
     if variant.requires_physical_ic_count and ic is None:
         raise ValueError("music parameters require known physical IC count")
-    if root.mode == 0x30 and calm is not None:
+    mode_enum = root_type.MusicMode
+    if root.mode == mode_enum.bloom and calm is not None:
         tail.no_rhythm_speed, tail.rhythm_speed = 10, 20 if calm else 80
-    elif root.mode == 0x31 and calm is not None:
+    elif root.mode == mode_enum.shiny and calm is not None:
         tail.minimum_brightness, tail.maximum_brightness = (20, 70) if calm else (5, 100)
     elif ic is not None:
-        if root.mode == 0x32 and (not preserve_companions or "gradient" in parameters):
+        if root.mode == mode_enum.separation and (not preserve_companions or "gradient" in parameters):
             tail.companion = (99, 98)[bool(tail.gradient)] if ic >= 30 else (97, 94)[bool(tail.gradient)]
-        elif root.mode == 0x33 and not preserve_companions:
+        elif root.mode == mode_enum.hopping and not preserve_companions:
             tail.piece_count_min = max(1, ceil(ic * 3 / 25))
             tail.piece_count_max = max(1, ceil(ic * 2 / 5))
-        elif root.mode == 0x34 and (not preserve_companions or "key_count" in parameters):
+        elif root.mode == mode_enum.piano_keys and (not preserve_companions or "key_count" in parameters):
             if not preserve_companions:
                 tail.speed = 10 if ic < 30 else 35
                 tail.off_minimum = ceil(ic / 4) if ic < 30 else 1
             tail.off_maximum = max(tail.off_minimum, tail.key_count // 2)
-        elif root.mode == 0x35 and (not preserve_companions or "direction" in parameters):
+        elif root.mode == mode_enum.fountain and (not preserve_companions or "direction" in parameters):
             tail.start_point = {"clockwise": 0, "counterclockwise": 2, "two_way": 1}[str(parameters["direction"])]
             two_way = tail.start_point == 1
             tail.piece_length = 1 if ic < 30 else 2 if two_way else 3
@@ -2503,7 +2506,7 @@ def _encode_h6099_music_parameters(
             )
             if not preserve_companions:
                 tail.speed = 80 if ic < 30 else 85
-        elif root.mode == 0x37 and not preserve_companions:
+        elif root.mode == mode_enum.day_and_night and not preserve_companions:
             tail.piece_count = max(1, ic // 2) if ic < 30 else ceil(ic * 7 / 50)
             # MusicMode.d uses default subEffect[0] (piece) as speed and [1] (10/20) as fade.
             tail.speed = max(1, min(50, tail.piece_count))

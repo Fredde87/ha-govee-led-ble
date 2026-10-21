@@ -104,8 +104,9 @@ class _ActiveModeMixin(_CoordinatorBase):
 
     @property
     def scene_name_set(self) -> frozenset[str]:
+        catalogue = self.profile.scene_catalogue_sku or self.model
         return frozenset(
-            key for key, scene in MODEL_SCENES.get(self.model, {}).items() if scene_supported(scene, self.profile)
+            key for key, scene in MODEL_SCENES.get(catalogue, {}).items() if scene_supported(scene, self.profile)
         )
 
     @property
