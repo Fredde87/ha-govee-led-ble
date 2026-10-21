@@ -2130,7 +2130,7 @@ class GoveeBLECoordinator(_DreamviewMixin, _ActiveModeMixin):
             ):
                 queries.append(
                     (
-                        build_white_balance_query(self.model),
+                        build_white_balance_query(self.model, profile=profile),
                         ReadDomain.DISPLAY_SETTING,
                         ("white_balance_scalar",)
                         if self.profile.video_white_balance_representation == "scalar"
@@ -2152,7 +2152,7 @@ class GoveeBLECoordinator(_DreamviewMixin, _ActiveModeMixin):
             ):
                 queries.append(
                     (
-                        build_blank_screen_query(self.model),
+                        build_blank_screen_query(self.model, profile=profile),
                         ReadDomain.DISPLAY_SETTING,
                         (
                             "blank_screen",
@@ -2168,7 +2168,13 @@ class GoveeBLECoordinator(_DreamviewMixin, _ActiveModeMixin):
                 and states["black_border"] is CapabilityState.SUPPORTED
                 and (query_black_border if query_black_border is not None else full_query)
             ):
-                queries.append((build_black_border_query(self.model), ReadDomain.DISPLAY_SETTING, ("black_border",)))
+                queries.append(
+                    (
+                        build_black_border_query(self.model, profile=profile),
+                        ReadDomain.DISPLAY_SETTING,
+                        ("black_border",),
+                    )
+                )
             if (
                 "relative_brightness" in confirmed_controls
                 and profile.can_read(ReadDomain.RELATIVE_BRIGHTNESS)
@@ -2177,7 +2183,7 @@ class GoveeBLECoordinator(_DreamviewMixin, _ActiveModeMixin):
             ):
                 queries.append(
                     (
-                        build_relative_brightness_query(self.model),
+                        build_relative_brightness_query(self.model, profile=profile),
                         ReadDomain.RELATIVE_BRIGHTNESS,
                         tuple(f"relative_brightness_{zone}" for zone in self.profile.video_brightness_zones),
                     )

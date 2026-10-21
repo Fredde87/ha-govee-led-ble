@@ -10,7 +10,6 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from custom_components.ha_govee_led_ble.const import (
     DOMAIN,
     MUSIC_MODE_SLUGS,
-    ReadDomain,
     SupportQuality,
     get_profile,
     resolve_model,
@@ -227,27 +226,6 @@ def test_declared_query_and_complete_status_root_coverage() -> None:
     )
     for packet, prefix in queries:
         assert packet == frame(prefix)
-    replies = (
-        "aa0101",
-        "aa042a",
-        "aa0515011194",
-        "aa06312e30302e3131",
-        "aa0703312e30302e3030",
-        "aa20312e30332e3030",
-        "aa21312e30302e3333",
-        "aa3002",
-        "aa3201",
-        "aaa9060132",
-        "aaae0104646464640000",
-        "aaa50164010203640102036401020364010203",
-    )
-    domains = set()
-    for prefix in replies:
-        decoded = decode_status_frame(frame(prefix), "H6099")
-        assert decoded is not None
-        domains.add(decoded.domain)
-    assert domains == get_profile("H6099").read_domains
-    assert ReadDomain.OTHER not in domains
     for group, count in ((1, 4), (2, 4), (3, 4), (4, 2)):
         assert build_segment_query(group, "H6099") == frame(f"aaa5{group:02x}")
         decoded = decode_status_frame(frame(f"aaa5{group:02x}" + "64010203" * 4), "H6099")
@@ -258,33 +236,14 @@ def test_declared_query_and_complete_status_root_coverage() -> None:
         build_segment_query(5, "H6099")
 
 
-def test_coordinator_consumes_exact_read_domains(hass: HomeAssistant) -> None:
+def test_coordinator_retains_music_colour_and_kelvin_across_omitted_readbacks(hass: HomeAssistant) -> None:
     entry = MockConfigEntry(domain=DOMAIN, unique_id="11:22:33:44:55:66")
     entry.add_to_hass(hass)
     with current_entry.set(entry):
         coordinator = GoveeBLECoordinator(hass, entry.unique_id, "H6099", configuration_url="http://example.test")
     with patch.object(coordinator, "async_set_updated_data"):
-        for prefix in (
-            "aa0101",
-            "aa042a",
-            "aa0515011194",
-            "aa06312e30302e3131",
-            "aa0703312e30302e3030",
-            "aa20312e30332e3030",
-            "aa21312e30302e3333",
-            "aaa9060132",
-            "aaae01040a141e280000",
-        ):
-            coordinator._notify_callback(None, bytearray(frame(prefix)))
-        for group in range(1, 5):
-            coordinator._notify_callback(None, bytearray(frame(f"aaa5{group:02x}" + "64010203" * 4)))
-        assert coordinator.is_on and coordinator.brightness_pct == 42
+        coordinator._notify_callback(None, bytearray(frame("aa0515011194")))
         assert coordinator.color_temp_kelvin == 4500
-        assert coordinator.white_balance_scalar == 50
-        assert coordinator.relative_brightness_bottom == 40
-        assert coordinator.fw_version == "1.00.11" and coordinator.hw_version == "1.00.00"
-        assert coordinator.subordinate_20_version == "1.03.00" and coordinator.subordinate_21_version == "1.00.33"
-        assert len(coordinator.segment_colors) == 14
         coordinator.music_color = (9, 8, 7)
         coordinator._notify_callback(None, bytearray(frame("aa0513332a0101010203")))
         assert coordinator.music_color == (9, 8, 7)

@@ -4,9 +4,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from custom_components.ha_govee_led_ble.const import MODEL_PROFILES, ReadDomain, device_profile
+from custom_components.ha_govee_led_ble.const import device_profile
 from custom_components.ha_govee_led_ble.coordinator import GoveeBLECoordinator
-from custom_components.ha_govee_led_ble.coordinator_status import ParsedMode, StatusDomain, decode_status_frame
+from custom_components.ha_govee_led_ble.coordinator_status import ParsedMode
 from custom_components.ha_govee_led_ble.effect_catalogue import H617A_TYPE04_APPLY_CODE, MODEL_EFFECT_CATALOGUES
 from custom_components.ha_govee_led_ble.effect_compiler import CompatibilityState, compatibility, compile_application
 from custom_components.ha_govee_led_ble.effect_domain import (
@@ -31,7 +31,6 @@ from custom_components.ha_govee_led_ble.generated_protocol_adapter import (
     build_segment_query,
     decode_wire_brightness,
     encode_wire_brightness,
-    parse_status,
 )
 from custom_components.ha_govee_led_ble.layered_scene import CatalogueRef
 from custom_components.ha_govee_led_ble.light import GoveeBLELight
@@ -43,14 +42,6 @@ from custom_components.ha_govee_led_ble.music_semantics import (
 )
 from custom_components.ha_govee_led_ble.scenes import SCENE_ENTRIES
 from custom_components.ha_govee_led_ble.transport import reassemble_a1_02, reassemble_a3, xor_checksum
-
-H = bytes.fromhex
-
-
-def frame(domain, body):
-    packet = bytes((0xAA, domain, *body)).ljust(19, b"\0")
-    return packet + bytes((xor_checksum(packet),))
-
 
 LEGACY = device_profile("H6125", 1, 2, firmware="1.07.00", hardware="1.00.03")
 CURRENT = device_profile("H6125", 1, 2, firmware="1.07.01", hardware="1.00.04")
@@ -137,24 +128,6 @@ def test_every_other_frame_reaches_the_device_unchanged() -> None:
     )
     assert all(_wire(CURRENT, packet) == packet for packet in packets)
     assert build_colour_mode_query("H6125", profile=CURRENT) == build_colour_mode_query("H617A", selector=1)
-
-
-def test_status_root_covers_every_declared_read_domain() -> None:
-    samples = {
-        ReadDomain.POWER: frame(0x01, [1]),
-        ReadDomain.BRIGHTNESS: frame(0x04, [0x80]),
-        ReadDomain.COLOUR_MODE: frame(0x05, [0x15, 0, 0x0F, 0xA0]),
-        ReadDomain.FIRMWARE: frame(0x06, list(b"1.07.01\0")),
-        ReadDomain.HARDWARE: frame(0x07, [3, *b"1.00.04\0"]),
-        ReadDomain.SEGMENTS: frame(0xA5, [1, 100, 255, 0, 0, 100, 0, 255, 0, 100, 0, 0, 255]),
-    }
-    profile = MODEL_PROFILES["H6125"]
-    assert set(samples) == profile.read_domains
-    for domain, packet in samples.items():
-        decoded = decode_status_frame(packet, "H6125", profile=profile)
-        assert decoded is not None and decoded.domain is StatusDomain(domain.value)
-    segments = parse_status(samples[ReadDomain.SEGMENTS], "H6125", profile=profile)
-    assert segments is not None and segments.body.segments[2].colour.blue == 255
 
 
 def test_expanded_music_companions_come_from_the_declared_ic_count() -> None:

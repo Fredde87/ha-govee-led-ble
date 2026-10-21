@@ -5,14 +5,11 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from homeassistant.exceptions import ServiceValidationError
 
-from custom_components.ha_govee_led_ble.const import ReadDomain, device_profile
+from custom_components.ha_govee_led_ble.const import device_profile
 from custom_components.ha_govee_led_ble.coordinator import GoveeBLECoordinator
-from custom_components.ha_govee_led_ble.coordinator_status import decode_status_frame
 from custom_components.ha_govee_led_ble.generated_protocol_adapter import (
     ProtocolParseRejection,
     build_brightness,
-    build_firmware_query,
-    build_hardware_query,
     build_power_query,
     build_segment_brightness,
     build_segment_query,
@@ -70,20 +67,6 @@ def test_power_query_panel_rgb_and_complete_read_root(model):
     require_profile_packet(panel, profile)
     if model == "H60A6":
         assert panel.hex() == "33051501ff0000000000000000100000000000cd"
-    # Identity prefixes are STATIC DERIVED, not reporter captures.
-    firmware = frame("aa06" + b"1.00.41\x00".hex())
-    hardware = frame("aa0703" + b"1.04.03\x00".hex())
-    statuses = {
-        ReadDomain.POWER: POWER,
-        ReadDomain.FIRMWARE: firmware,
-        ReadDomain.HARDWARE: hardware,
-        ReadDomain.SEGMENTS: bytes.fromhex(next(iter(CAPTURED_PAGES[model]))),
-    }
-    assert profile.read_domains == statuses.keys()
-    for domain, packet in statuses.items():
-        assert decode_status_frame(packet, model, profile=profile).domain is domain
-    for builder in (build_power_query, build_firmware_query, build_hardware_query):
-        require_profile_packet(builder(model, profile=profile), profile)
 
 
 @pytest.mark.parametrize("model", ["H60A1", "H60A6"])

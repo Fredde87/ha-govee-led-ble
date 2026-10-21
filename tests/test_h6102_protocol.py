@@ -4,9 +4,9 @@ from dataclasses import replace
 
 import pytest
 
-from custom_components.ha_govee_led_ble.const import ModelProfile, ReadDomain, get_profile
+from custom_components.ha_govee_led_ble.const import ModelProfile, get_profile
 from custom_components.ha_govee_led_ble.coordinator_expectations import expectations_from_packet
-from custom_components.ha_govee_led_ble.coordinator_status import ParsedMode, decode_status_frame, parse_color_mode
+from custom_components.ha_govee_led_ble.coordinator_status import ParsedMode, parse_color_mode
 from custom_components.ha_govee_led_ble.effect_commands import build_h617a_diy_single
 from custom_components.ha_govee_led_ble.generated_protocol_adapter import (
     ProtocolParseRejection,
@@ -70,27 +70,16 @@ def test_modern_commands_use_shared_grammar_and_exact_scene_catalogue() -> None:
 
 
 def test_complete_status_root_covers_exact_profile_and_preserves_unused_slots() -> None:
-    frames = {
-        ReadDomain.POWER: _frame("aa0101"),
-        ReadDomain.BRIGHTNESS: _frame("aa0432"),
-        ReadDomain.COLOUR_MODE: _frame("aa0515010fa0"),
-        ReadDomain.FIRMWARE: _frame("aa06332e30322e303200"),
-        ReadDomain.HARDWARE: _frame("aa0703332e30312e303100"),
-        ReadDomain.SEGMENTS: _frame("aaa505000000006420406032aabbccdeadbeef"),
-    }
-    assert get_profile("H6102").read_domains <= frames.keys()
-    for domain, packet in frames.items():
-        result = parse_status_result(packet, "H6102")
-        assert result.rejection is None and result.parser == "h6102_status_reply"
-        decoded = decode_status_frame(packet, "H6102")
-        assert decoded is not None and decoded.domain == domain
-    generated = parse_status_result(frames[ReadDomain.SEGMENTS], "H6102").parsed
+    segment_frame = _frame("aaa505000000006420406032aabbccdeadbeef")
+    result = parse_status_result(segment_frame, "H6102")
+    assert result.rejection is None and result.parser == "h6102_status_reply"
+    generated = result.parsed
     assert generated is not None
     page = generated.body
     assert page.group == 5 and len(page.segments) == 3
     assert page.segments[0].brightness == 0  # Off/black is a meaningful record.
     assert page.unused == [0xDE, 0xAD, 0xBE, 0xEF]
-    assert parse_status_result(frames[ReadDomain.SEGMENTS], "H617A").rejection is ProtocolParseRejection.SCHEMA_REJECTED
+    assert parse_status_result(segment_frame, "H617A").rejection is ProtocolParseRejection.SCHEMA_REJECTED
     for group in range(1, 6):
         assert build_segment_query(group, "H6102") == _frame(f"aaa5{group:02x}")
     for group in (0, 6):

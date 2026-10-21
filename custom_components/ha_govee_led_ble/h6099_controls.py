@@ -35,7 +35,7 @@ def installation_direction_value(value: Any) -> int:
 def h6099_control_queries(model: str, profile: ModelProfile) -> tuple[bytes, ...]:
     """Optional refresh queries; neither domain is required for setup."""
     return tuple(
-        builder(model)
+        builder(model, profile=profile)
         for domain, builder in (
             (ReadDomain.INSTALLATION_DIRECTION, build_installation_direction_query),
             (ReadDomain.CAMERA_HEALTH, build_camera_health_query),

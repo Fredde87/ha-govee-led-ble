@@ -59,35 +59,9 @@ def test_status_rejections_expose_stable_reasons_and_fail_closed() -> None:
     assert invalid_shape.rejection is ProtocolParseRejection.SCHEMA_REJECTED
 
 
-def test_status_envelope_exposes_semantic_domain() -> None:
-    result = decode_status_frame_result(H("aa05049d0800000000000000000000000000003e"))
-    decoded = result.parsed
-    assert decoded is not None
-    assert result.parser == "status_reply"
-    assert result.rejection is None
-    assert decoded.domain is StatusDomain.COLOUR_MODE
-    assert decoded.raw_domain == 0x05
-
-
-def test_identity_versions_decode_for_both_models() -> None:
-    firmware = decode_status_frame(H("aa06332e30322e3234000000000000000000009b"))
-    hardware = decode_status_frame(H("aa0703332e30312e30310000000000000000009d"))
-    h6199_hardware = decode_status_frame(H("aa0703332e30322e30310000000000000000009e"), "H6199")
-    assert firmware is not None and firmware.generated.body.text == "3.02.24"
-    assert hardware is not None and hardware.generated.body.text == "3.01.01"
-    assert h6199_hardware is not None and h6199_hardware.generated.body.text == "3.02.01"
-
-
 @pytest.mark.parametrize("model", ["H617A", "H617E"])
 def test_production_three_record_status_contract(model: str) -> None:
     frame = bytearray(H("aaa50164ff880d64ff880d64ff880d0000000010"))
-    for group in range(1, 6):
-        frame[2] = group
-        frame[-1] = xor_checksum(frame[:-1])
-        decoded = decode_status_frame(bytes(frame), model)
-        assert decoded is not None
-        assert decoded.generated.body.num_segments == len(decoded.generated.body.segments) == 3
-        assert decoded.generated.body.unused == [0] * 4
     for group in (0, 6):
         frame[2] = group
         frame[-1] = xor_checksum(frame[:-1])

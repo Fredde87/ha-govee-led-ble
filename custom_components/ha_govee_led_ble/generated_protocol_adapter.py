@@ -914,8 +914,8 @@ def parse_h6199_control(generated: Any) -> dict[str, int | str | None]:
     return {}
 
 
-def build_installation_direction(value: int, model: str) -> bytes:
-    profile = get_profile(model)
+def build_installation_direction(value: int, model: str, *, profile: ModelProfile | None = None) -> bytes:
+    profile = profile or get_profile(model)
     if not profile.supports_installation_direction or profile.command_grammar != "H6099":
         raise ValueError(f"{model} has no qualified installation-direction writer")
     if type(value) is not int or value not in INSTALLATION_DIRECTIONS:
@@ -928,15 +928,15 @@ def build_installation_direction(value: int, model: str) -> bytes:
     return _serialize_xor(root)
 
 
-def build_installation_direction_query(model: str) -> bytes:
-    profile = get_profile(model)
+def build_installation_direction_query(model: str, *, profile: ModelProfile | None = None) -> bytes:
+    profile = profile or get_profile(model)
     if not profile.can_read(ReadDomain.INSTALLATION_DIRECTION) or profile.command_grammar != "H6099":
         raise ValueError(f"{model} has no qualified installation-direction query")
     return _build_status_query("installation_direction", profile.command_grammar)
 
 
-def build_camera_health_query(model: str) -> bytes:
-    profile = get_profile(model)
+def build_camera_health_query(model: str, *, profile: ModelProfile | None = None) -> bytes:
+    profile = profile or get_profile(model)
     if not profile.can_read(ReadDomain.CAMERA_HEALTH) or profile.command_grammar != "H6099":
         raise ValueError(f"{model} has no qualified camera-health query")
     return _build_status_query("camera_health", profile.command_grammar)
@@ -949,15 +949,15 @@ def parse_physical_ic_count(generated: Any) -> int | None:
     return count if count > 0 else None
 
 
-def _video_grammar(model: str) -> str:
-    profile = get_profile(model)
+def _video_grammar(model: str, profile: ModelProfile | None = None) -> str:
+    profile = profile or get_profile(model)
     if not profile.supports_video_mode or profile.video_grammar is None:
         raise ValueError(f"{model} does not support video mode")
     return profile.video_grammar
 
 
-def build_white_balance_query(model: str) -> bytes:
-    profile = get_profile(model)
+def build_white_balance_query(model: str, *, profile: ModelProfile | None = None) -> bytes:
+    profile = profile or get_profile(model)
     if not profile.supports_white_balance_readback or not profile.can_read(ReadDomain.DISPLAY_SETTING):
         raise ValueError(f"{model} does not support white-balance readback")
     if (grammar := profile.command_grammar) in {"H6099", "H6199"} or (
@@ -968,20 +968,20 @@ def build_white_balance_query(model: str) -> bytes:
     raise ValueError(f"{model} has no generated white-balance query grammar")
 
 
-def build_blank_screen_query(model: str) -> bytes:
-    profile = get_profile(model)
+def build_blank_screen_query(model: str, *, profile: ModelProfile | None = None) -> bytes:
+    profile = profile or get_profile(model)
     if not profile.supports_blank_screen:
         raise ValueError(f"{model} does not support blank-screen detection")
-    if (grammar := _video_grammar(model)) in {"H6099", "H6199"}:
+    if (grammar := _video_grammar(model, profile)) in {"H6099", "H6199"}:
         return _build_status_query("display_setting", grammar, display_setting="blank_screen")
     raise ValueError(f"{model} has no generated blank-screen query grammar")
 
 
-def build_relative_brightness_query(model: str) -> bytes:
-    profile = get_profile(model)
+def build_relative_brightness_query(model: str, *, profile: ModelProfile | None = None) -> bytes:
+    profile = profile or get_profile(model)
     if not profile.supports_relative_brightness:
         raise ValueError(f"{model} does not support relative brightness")
-    if (grammar := _video_grammar(model)) in {"H6099", "H6199"}:
+    if (grammar := _video_grammar(model, profile)) in {"H6099", "H6199"}:
         return _build_status_query("relative_brightness", grammar)
     raise ValueError(f"{model} has no generated relative-brightness query grammar")
 
@@ -990,19 +990,20 @@ def build_h6199_subordinate_query(domain: int) -> bytes:
     return build_subordinate_query(domain, "H6199")
 
 
-def build_subordinate_query(domain: int, model: str) -> bytes:
+def build_subordinate_query(domain: int, model: str, *, profile: ModelProfile | None = None) -> bytes:
     if domain not in {0x20, 0x21}:
         raise ValueError("subordinate query domain must be 0x20 or 0x21")
-    profile = get_profile(model)
+    profile = profile or get_profile(model)
     if not profile.can_read(ReadDomain(f"subordinate_{domain:02x}")):
         raise ValueError(f"{model} does not support this subordinate identity query")
     return _build_status_query(f"subordinate_{domain:02x}", profile.command_grammar)
 
 
-def build_black_border_query(model: str) -> bytes:
-    if not get_profile(model).supports_black_border:
+def build_black_border_query(model: str, *, profile: ModelProfile | None = None) -> bytes:
+    profile = profile or get_profile(model)
+    if not profile.supports_black_border:
         raise ValueError(f"{model} does not support black-border removal")
-    return _build_status_query("display_setting", _video_grammar(model), display_setting="black_border")
+    return _build_status_query("display_setting", _video_grammar(model, profile), display_setting="black_border")
 
 
 def build_segment_query(group: int, model: str = "H617A", *, profile: ModelProfile | None = None) -> bytes:
